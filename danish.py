@@ -29,7 +29,7 @@ def initRx(iface, filt):
 def printPkt(hdr, pkt):
   # Print timestamps  
   tAbs, tRel = hdr.getts()
-  print "tAbs>" + str(tAbs) + " tRel>" + str(tRel) + " " 
+  print "\ntAbs>" + str(tAbs) + " tRel>" + str(tRel) + " " 
 
   s = []
   for c in pkt:
@@ -42,9 +42,26 @@ def printPkt(hdr, pkt):
   print "dst>" + dst + " src>" + src + " etype>" + etype
 
   # Print rest of packet
-  print ':'.join(s[14:]) + "\n"
+  ii = 1
+  outStr = "0000 | "
+  outAsc = ""
+  for c in s[14:]:
+    outStr += c
+    if(int(c, 16) > 32 and int(c, 16) < 127):
+      outAsc += chr(int(c, 16))
+    else:
+      outAsc += "."
 
-  
+    if(ii % 4 == 0):
+      outStr += " "
+    
+    if(ii % 16 == 0):
+      print outStr + " | " + outAsc
+      outStr = str(ii).zfill(4) + " | "
+      outAsc = ""
+    ii += 1
+
+
 pr = initRx('br-lan', "icmp")
 while True:
   pkt = pr.dispatch(1, printPkt)
