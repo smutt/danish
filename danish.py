@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 
+import sys
+sys.path.insert(0, sys.path[0] + '/dpkt/')
 import os
 import pcapy as pcap
-import dns
+import dpkt
+#import dns
+
+
 
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
@@ -28,6 +33,28 @@ def initRx(iface, filt):
     
   return pr
 
+# Takes a list of character nibbles
+# Prints them in pretty hex format
+def printHex(chars):
+  ii = 1
+  outStr = "0000 | "
+  outAsc = ""
+  for c in chars:
+    outStr += c
+    if(int(c, 16) > 32 and int(c, 16) < 127):
+      outAsc += chr(int(c, 16))
+    else:
+      outAsc += "."
+
+    if(ii % 4 == 0):
+      outStr += " "
+    
+    if(ii % 16 == 0):
+      print outStr + " | " + outAsc
+      outStr = str(ii).zfill(4) + " | "
+      outAsc = ""
+    ii += 1
+  
 # Prints a packet
 def printPkt(hdr, pkt):
   # Print timestamps  
@@ -44,25 +71,18 @@ def printPkt(hdr, pkt):
   etype = ':'.join(s[12:14])
   print "dst>" + dst + " src>" + src + " etype>" + etype
 
-  # Print rest of packet
-  ii = 1
-  outStr = "0000 | "
-  outAsc = ""
-  for c in s[14:]:
-    outStr += c
-    if(int(c, 16) > 32 and int(c, 16) < 127):
-      outAsc += chr(int(c, 16))
-    else:
-      outAsc += "."
-
-    if(ii % 4 == 0):
-      outStr += " "
-    
-    if(ii % 16 == 0):
-      print outStr + " | " + outAsc
-      outStr = str(ii).zfill(4) + " | "
-      outAsc = ""
-    ii += 1
+  printHex(s[14:])
+  
+# Parses a TLS ClientHello packet using dpkt
+def parseClientHello(hdr, pkt):
+  printPkt(hdr, pkt)
+  eth = dpkt.ethernet.Ethernet(pkt)
+  if(eth.type == dpkt.ethernet.ETH_TYPE_IP or eth.type == dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
+    ip = eth.data
+    tcp = ip.data
+    tls = dpkt.ssl.TLSHandshake(tcp.data)
+  else:
+    print "Error:Unsupported ethertype " + eth.type
     
 ###################
 # BEGIN EXECUTION #
@@ -76,9 +96,6 @@ BPF_REPLY = ""
 pr = initRx('br-lan', BPF_HELLO)
 
 while True:
-  pkt = pr.dispatch(1, printPkt)
+  pkt = pr.dispatch(1, parseClientHello)
 
-
-
- 
 print "Finished Execution"
