@@ -4,25 +4,28 @@ import os
 import pcapy as pcap
 import dns
 
-
 # Initializes a pcap capture object
-# Returns a string on failure and pcapy.Reader on success
+# Prints a string on failure and returns pcapy.Reader on success
 def initRx(iface, filt):
   if(os.getuid() or os.geteuid()):
-    return "Error:Requires root access"
-  
+    print "Error:Requires root access"
+    return
+    
   if(not iface in pcap.findalldevs()):
-    return "Error:Bad interface " + iface
-
+    print "Error:Bad interface " + iface
+    return
+    
   pr = pcap.open_live(iface, 65536, True, 10)
   if(pr.datalink() != pcap.DLT_EN10MB):
-    return "Error:Interface not Ethernet " + iface
-
+    print "Error:Interface not Ethernet " + iface
+    return
+    
   try:
     pr.setfilter(filt)
   except pcap.PcapError:
-    return "Error:Bad capture filter"
-
+    print "Error:Bad capture filter"
+    return
+    
   return pr
 
 # Prints a packet
@@ -60,9 +63,18 @@ def printPkt(hdr, pkt):
       outStr = str(ii).zfill(4) + " | "
       outAsc = ""
     ii += 1
+    
+###################
+# BEGIN EXECUTION #
+###################
 
+# http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
+BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
+BPF_REPLY = ""
 
-pr = initRx('br-lan', "icmp")
+#pr = initRx('br-lan', "icmp")
+pr = initRx('br-lan', BPF_HELLO)
+
 while True:
   pkt = pr.dispatch(1, printPkt)
 
