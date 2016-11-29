@@ -97,7 +97,7 @@ def parseClientHello(hdr, pkt):
   if(0 not in tlsClientHello.extensions):
     death("Error:SNI not found in TLS Client Hello")
   
-  printNibbles(dpktDataToNibStrList(tlsClientHello.data))
+  #printNibbles(dpktDataToNibStrList(tlsClientHello.data))
   sni = tlsClientHello.extensions[0]
 
   if(struct.unpack("!B", sni[2:3])[0] != 0):
@@ -105,7 +105,13 @@ def parseClientHello(hdr, pkt):
 
   domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
 
-  print domain
+  print "Client SNI:" + domain
+
+
+def parseServerReply(hdr, pkt):
+  printPkt(hdr, pkt)
+
+
   
 ###################
 # BEGIN EXECUTION #
@@ -113,12 +119,16 @@ def parseClientHello(hdr, pkt):
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
-BPF_REPLY = ""
+BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x0b) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16)"
 
 #pr = initRx('br-lan', "icmp")
-pr = initRx('br-lan', BPF_HELLO)
+helloPR = initRx('br-lan', BPF_HELLO)
+replyPR = initRx('br-lan', BPF_REPLY)
 
 while True:
-  pkt = pr.dispatch(1, parseClientHello)
+  helloPR.dispatch(1, parseClientHello)
+  replyPR.dispatch(1, parseServerReply)
 
+
+  
 print "Finished Execution"
