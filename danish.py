@@ -5,6 +5,7 @@ sys.path.insert(0, sys.path[0] + '/dpkt/')
 import os
 import pcapy as pcap
 import dpkt
+import struct
 #import dns
 
 # Print string then die
@@ -89,20 +90,23 @@ def parseClientHello(hdr, pkt):
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
 
   if(dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake'):
-    death("Error:Client Hello Packet captured not TLSHandshake")
+    death("Error:TLS Packet captured not TLSHandshake")
 
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
-
-  print "\nTLS Handshake REPR"
-  print tlsHandshake.__repr__()
-
   tlsClientHello = tlsHandshake.data
+  if(0 not in tlsClientHello.extensions):
+    death("Error:SNI not found in TLS Client Hello")
   
-  print "\nTLS Client Hello DATA"
-  print tlsClientHello.__repr__()
   printNibbles(dpktDataToNibStrList(tlsClientHello.data))
+  sni = tlsClientHello.extensions[0]
 
-    
+  if(struct.unpack("!B", sni[2:3])[0] != 0):
+    death("Error:SNI not a DNS name")
+
+  domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
+
+  print domain
+  
 ###################
 # BEGIN EXECUTION #
 ###################
