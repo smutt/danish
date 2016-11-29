@@ -7,35 +7,41 @@ import pcapy as pcap
 import dpkt
 #import dns
 
-
-
+# Print string then die
+def death(errStr):
+  print errStr
+  sys.exit(1)
+  
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
 def initRx(iface, filt):
   if(os.getuid() or os.geteuid()):
-    print "Error:Requires root access"
-    return
+    death("Error:Requires root access")
     
   if(not iface in pcap.findalldevs()):
-    print "Error:Bad interface " + iface
-    return
+    death("Error:Bad interface " + iface)
     
   pr = pcap.open_live(iface, 65536, True, 10)
   if(pr.datalink() != pcap.DLT_EN10MB):
-    print "Error:Interface not Ethernet " + iface
-    return
+    death("Error:Interface not Ethernet " + iface)
     
   try:
     pr.setfilter(filt)
   except pcap.PcapError:
-    print "Error:Bad capture filter"
-    return
+    death("Error:Bad capture filter")
     
   return pr
 
+# Converts pcap data to Nibble String List
+def dpktDataToNibStrList(data):
+  s = []
+  for c in data:
+    s.append(hex(ord(c)).lstrip("0x").zfill(2))
+  return s
+
 # Takes a list of character nibbles
-# Prints them in pretty hex format
-def printHex(chars):
+# Prints them in pretty nibble hex format
+def printNibbles(chars):
   ii = 1
   outStr = "0000 | "
   outAsc = ""
@@ -61,28 +67,41 @@ def printPkt(hdr, pkt):
   tAbs, tRel = hdr.getts()
   print "\ntAbs>" + str(tAbs) + " tRel>" + str(tRel) + " " 
 
-  s = []
-  for c in pkt:
-    s.append(hex(ord(c)).lstrip("0x").zfill(2))
-
+  s = dpktDataToNibStrList(pkt)
+  
   # Print Linklayer
   dst = ':'.join(s[:6])
   src = ':'.join(s[6:12])
   etype = ':'.join(s[12:14])
   print "dst>" + dst + " src>" + src + " etype>" + etype
 
-  printHex(s[14:])
+  printNibbles(s[14:])
   
 # Parses a TLS ClientHello packet using dpkt
 def parseClientHello(hdr, pkt):
-  printPkt(hdr, pkt)
   eth = dpkt.ethernet.Ethernet(pkt)
-  if(eth.type == dpkt.ethernet.ETH_TYPE_IP or eth.type == dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
-    ip = eth.data
-    tcp = ip.data
-    tls = dpkt.ssl.TLSHandshake(tcp.data)
-  else:
-    print "Error:Unsupported ethertype " + eth.type
+  if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
+    death("Error:Unsupported ethertype " + eth.type)
+
+  ip = eth.data
+  tcp = ip.data
+
+  tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
+
+  if(dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake'):
+    death("Error:Client Hello Packet captured not TLSHandshake")
+
+  tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
+
+  print "\nTLS Handshake REPR"
+  print tlsHandshake.__repr__()
+
+  tlsClientHello = tlsHandshake.data
+  
+  print "\nTLS Client Hello DATA"
+  print tlsClientHello.__repr__()
+  printNibbles(dpktDataToNibStrList(tlsClientHello.data))
+
     
 ###################
 # BEGIN EXECUTION #
