@@ -119,9 +119,8 @@ def parseServerReply(hdr, pkt):
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
-BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x0b) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16)"
+BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x02) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (src port 443)"
 
-#pr = initRx('br-lan', "icmp")
 helloPR = initRx('br-lan', BPF_HELLO)
 replyPR = initRx('br-lan', BPF_REPLY)
 
