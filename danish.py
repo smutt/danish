@@ -61,6 +61,12 @@ def printNibbles(chars):
       outStr = str(ii).zfill(4) + " | "
       outAsc = ""
     ii += 1
+
+# Writes a packet to /tmp/danish.pcap
+# Takes pcap.Reader object
+def dumpPkt(pr):
+  dh = pr.dump_open('/tmp/danish.pcap')
+  dh.dump(pr.dispatch(2, dumpPkt))
   
 # Prints a packet
 def printPkt(hdr, pkt):
@@ -78,7 +84,7 @@ def printPkt(hdr, pkt):
 
   printNibbles(s[14:])
   
-# Parses a TLS ClientHello packet using dpkt
+# Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
   eth = dpkt.ethernet.Ethernet(pkt)
   if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
@@ -88,26 +94,22 @@ def parseClientHello(hdr, pkt):
   tcp = ip.data
 
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
-
   if(dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake'):
     death("Error:TLS Packet captured not TLSHandshake")
 
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
   tlsClientHello = tlsHandshake.data
-  if(0 not in tlsClientHello.extensions):
+  if(0 not in dict(tlsClientHello.extensions)):
     death("Error:SNI not found in TLS Client Hello")
-  
-  #printNibbles(dpktDataToNibStrList(tlsClientHello.data))
-  sni = tlsClientHello.extensions[0]
 
+  sni = dict(tlsClientHello.extensions)[0]
   if(struct.unpack("!B", sni[2:3])[0] != 0):
     death("Error:SNI not a DNS name")
-
   domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
-
   print "Client SNI:" + domain
 
-
+# Parses a TLS ServerHello packet
+# We will have to deal with TCP reassembly
 def parseServerReply(hdr, pkt):
   printPkt(hdr, pkt)
 
@@ -126,8 +128,10 @@ replyPR = initRx('br-lan', BPF_REPLY)
 
 while True:
   helloPR.dispatch(1, parseClientHello)
-  replyPR.dispatch(1, parseServerReply)
 
+#  replyPR.dispatch(2, dumpPkt)
+#dumpPkt(replyPR)
+  
 
   
 print "Finished Execution"
