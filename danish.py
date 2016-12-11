@@ -68,7 +68,7 @@ def dumpPkt(pr):
   dh = pr.dump_open('/tmp/danish.pcap')
   dh.dump(pr.dispatch(2, dumpPkt))
   
-# Prints a packet
+# Prints a packet for debugging, can assume it's always TCP
 def printPkt(hdr, pkt):
   # Print timestamps  
   tAbs, tRel = hdr.getts()
@@ -77,12 +77,36 @@ def printPkt(hdr, pkt):
   s = dpktDataToNibStrList(pkt)
   
   # Print Linklayer
-  dst = ':'.join(s[:6])
-  src = ':'.join(s[6:12])
+  dst2 = ':'.join(s[:6])
+  src2 = ':'.join(s[6:12])
   etype = ':'.join(s[12:14])
-  print "dst>" + dst + " src>" + src + " etype>" + etype
+  print "L2 dst>" + dst2 + " src>" + src2 + " etype>" + etype
 
-  printNibbles(s[14:])
+  # Print IPv4/IPv6
+  if etype == '08:00':
+    #ver = 'IPv4'
+    #ln = ':'.join(s[16:18])
+    frag = ':'.join(s[20:22])
+    #type4 = ':'.join(s[23])
+    src3 = ':'.join(s[26:30])
+    dst3 = ':'.join(s[30:34])
+    print "L3 dst>" + dst3 + " src>" + src3 + " frag>" + frag
+    printNibbles(s[34:])
+    
+  elif etype == '86:dd':
+    #ver = 'IPv6'
+    #ln = ':'.join(s[18:20])
+    frag = 
+    #type4 = ':'.join(s[20])
+    src3 = ':'.join(s[22:38])
+    dst3 = ':'.join(s[38:54])
+    print "L3 dst>" + dst3 + " src>" + src3
+    printNibbles(s[54:])
+    
+  else:
+    printNibbles(s[14:])
+
+
   
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
@@ -126,11 +150,12 @@ BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x02) and (tcp[((tcp[12:1] & 
 helloPR = initRx('br-lan', BPF_HELLO)
 replyPR = initRx('br-lan', BPF_REPLY)
 
+print "Begin Execution"
 while True:
   helloPR.dispatch(1, parseClientHello)
+  replyPR.dispatch(2, printPkt)
 
-#  replyPR.dispatch(2, dumpPkt)
-#dumpPkt(replyPR)
+  
   
 
   
