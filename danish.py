@@ -12,6 +12,7 @@ import struct
 def death(errStr):
   print errStr
   sys.exit(1)
+
   
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
@@ -33,12 +34,14 @@ def initRx(iface, filt):
     
   return pr
 
+
 # Converts pcap data to Nibble String List
 def dpktDataToNibStrList(data):
   s = []
   for c in data:
     s.append(hex(ord(c)).lstrip("0x").zfill(2))
   return s
+
 
 # Takes a list of character nibbles
 # Prints them in pretty nibble hex format
@@ -62,11 +65,14 @@ def printNibbles(chars):
       outAsc = ""
     ii += 1
 
+    
 # Writes a packet to /tmp/danish.pcap
-# Takes pcap.Reader object
-def dumpPkt(pr):
-  dh = pr.dump_open('/tmp/danish.pcap')
-  dh.dump(pr.dispatch(2, dumpPkt))
+def dumpPkt(hdr, pkt):
+  fh = open('/tmp/danish.pcap', 'wb')
+  df = dpkt.pcap.Writer(fh)
+  df.writepkt(pkt)
+  df.close()
+
   
 # Prints a packet for debugging, can assume it's always TCP
 def printPkt(hdr, pkt):
@@ -96,7 +102,6 @@ def printPkt(hdr, pkt):
   elif etype == '86:dd':
     #ver = 'IPv6'
     #ln = ':'.join(s[18:20])
-    frag = 
     #type4 = ':'.join(s[20])
     src3 = ':'.join(s[22:38])
     dst3 = ':'.join(s[38:54])
@@ -105,11 +110,11 @@ def printPkt(hdr, pkt):
     
   else:
     printNibbles(s[14:])
-
-
+    
   
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
+  print "Entered parseClientHello"
   eth = dpkt.ethernet.Ethernet(pkt)
   if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
     death("Error:Unsupported ethertype " + eth.type)
@@ -132,11 +137,17 @@ def parseClientHello(hdr, pkt):
   domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
   print "Client SNI:" + domain
 
+  
 # Parses a TLS ServerHello packet
 # We will have to deal with TCP reassembly
-def parseServerReply(hdr, pkt):
+def parseServerHello(hdr, pkt):
+  print "Entered parseServerHello"
+  eth = dpkt.ethernet.Ethernet(pkt)
+  if len(eth) < 140: # Sometimes pcapy gives us buffer leftovers
+    return
+  
   printPkt(hdr, pkt)
-
+  dumpPkt(hdr, pkt)
 
   
 ###################
@@ -153,10 +164,8 @@ replyPR = initRx('br-lan', BPF_REPLY)
 print "Begin Execution"
 while True:
   helloPR.dispatch(1, parseClientHello)
-  replyPR.dispatch(2, printPkt)
+  replyPR.dispatch(1, parseServerHello)
+
 
   
-  
-
-  
-print "Finished Execution"
+print "End Execution"
