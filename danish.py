@@ -20,11 +20,11 @@ def initRx(iface, filt):
   if(os.getuid() or os.geteuid()):
     death("Error:Requires root access")
     
-  if(not iface in pcap.findalldevs()):
+  if not iface in pcap.findalldevs():
     death("Error:Bad interface " + iface)
     
   pr = pcap.open_live(iface, 65536, True, 10)
-  if(pr.datalink() != pcap.DLT_EN10MB):
+  if pr.datalink() != pcap.DLT_EN10MB:
     death("Error:Interface not Ethernet " + iface)
     
   try:
@@ -139,11 +139,11 @@ def parseClientHello(hdr, pkt):
     death("Error:TLSHandshake captured not ClientHello")
 
   tlsClientHello = tlsHandshake.data
-  if(0 not in dict(tlsClientHello.extensions)):
+  if 0 not in dict(tlsClientHello.extensions):
     death("Error:SNI not found in TLS ClientHello")
 
   sni = dict(tlsClientHello.extensions)[0]
-  if(struct.unpack("!B", sni[2:3])[0] != 0):
+  if struct.unpack("!B", sni[2:3])[0] != 0:
     death("Error:SNI not a DNS name")
   domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
   print "Client SNI:" + domain
@@ -156,7 +156,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
 
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
-  if(dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake'):
+  if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake' :
     death("Error:TLS Packet captured not TLSHandshake")
 
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
