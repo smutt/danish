@@ -9,7 +9,7 @@ import struct
 #import dns
 
 # Print string then die
-def death(errStr):
+def death(errStr=''):
   print errStr
   sys.exit(1)
 
@@ -111,25 +111,36 @@ def printPkt(hdr, pkt):
   else:
     printNibbles(s[14:])
     
-  
-# Parses a TLS ClientHello packet
-def parseClientHello(hdr, pkt):
-  print "Entered parseClientHello"
+
+# Takes pcapy packet and returns 3 layers
+def parseTCP(pkt):
   eth = dpkt.ethernet.Ethernet(pkt)
+  if len(eth) < 140: # Sometimes pcapy gives us buffer leftovers
+    return
+
   if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
     death("Error:Unsupported ethertype " + eth.type)
 
   ip = eth.data
-  tcp = ip.data
+  return eth, ip, ip.data
+
+  
+# Parses a TLS ClientHello packet
+def parseClientHello(hdr, pkt):
+  print "Entered parseClientHello"
+  eth, ip, tcp = parseTCP(pkt)
 
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
-  if(dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake'):
+  if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
     death("Error:TLS Packet captured not TLSHandshake")
 
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
+  if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
+    death("Error:TLSHandshake captured not ClientHello")
+
   tlsClientHello = tlsHandshake.data
   if(0 not in dict(tlsClientHello.extensions)):
-    death("Error:SNI not found in TLS Client Hello")
+    death("Error:SNI not found in TLS ClientHello")
 
   sni = dict(tlsClientHello.extensions)[0]
   if(struct.unpack("!B", sni[2:3])[0] != 0):
@@ -142,10 +153,18 @@ def parseClientHello(hdr, pkt):
 # We will have to deal with TCP reassembly
 def parseServerHello(hdr, pkt):
   print "Entered parseServerHello"
-  eth = dpkt.ethernet.Ethernet(pkt)
-  if len(eth) < 140: # Sometimes pcapy gives us buffer leftovers
-    return
-  
+  eth, ip, tcp = parseTCP(pkt)
+
+  tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
+  if(dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake'):
+    death("Error:TLS Packet captured not TLSHandshake")
+
+  tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
+  if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ServerHello':
+    death("Error:TLSHandshake captured not ServerHello")
+
+  tlsServerHello = tlsHandshake.data
+    
   printPkt(hdr, pkt)
   dumpPkt(hdr, pkt)
 
