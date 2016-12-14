@@ -3,10 +3,16 @@
 import sys
 sys.path.insert(0, sys.path[0] + '/dpkt/')
 import os
+import datetime
+import signal
 import pcapy as pcap
 import dpkt
 import struct
 #import dns
+
+class DanishError(Exception):
+  pass
+
 
 # Print string then die
 def death(errStr=''):
@@ -14,6 +20,23 @@ def death(errStr=''):
   sys.exit(1)
 
   
+# Cleanup before dieing
+def deathBed(signal, frame):
+  if dbg:
+    dbgFH.close()
+  sys.exit(0)
+
+  
+# Logs message to /tmp/danish.log
+def dbgLog(dbgStr):
+  dt = datetime.datetime.now()
+  ts = dt.strftime("%b %d %H:%M:%S.%f") + " "
+  try:
+    dbgFH.write(ts + str(dbgStr) + '\n')
+  except IOError:
+    death("Error:IOError writing to debug file " + dbgFName)
+
+
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
 def initRx(iface, filt):
@@ -116,8 +139,9 @@ def printPkt(hdr, pkt):
 def parseTCP(pkt):
   eth = dpkt.ethernet.Ethernet(pkt)
   if len(eth) < 140: # Sometimes pcapy gives us buffer leftovers
-    return
-
+    dbgLog("Warn:Captured packet < 140 bytes")
+    raise DanishError("Warn:Captured packet < 140 bytes")
+    
   if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
     death("Error:Unsupported ethertype " + eth.type)
 
@@ -128,7 +152,10 @@ def parseTCP(pkt):
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
   print "Entered parseClientHello"
-  eth, ip, tcp = parseTCP(pkt)
+  try:
+    eth, ip, tcp = parseTCP(pkt)
+  except DanishError:
+    return
 
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
@@ -153,8 +180,11 @@ def parseClientHello(hdr, pkt):
 # We will have to deal with TCP reassembly
 def parseServerHello(hdr, pkt):
   print "Entered parseServerHello"
-  eth, ip, tcp = parseTCP(pkt)
-
+  try:
+    eth, ip, tcp = parseTCP(pkt)
+  except DanishError:
+    return
+  
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake' :
     death("Error:TLS Packet captured not TLSHandshake")
@@ -164,7 +194,10 @@ def parseServerHello(hdr, pkt):
     death("Error:TLSHandshake captured not ServerHello")
 
   tlsServerHello = tlsHandshake.data
-    
+
+  dbgLog(repr(tlsServerHello.extensions))
+  
+  
   printPkt(hdr, pkt)
   dumpPkt(hdr, pkt)
 
@@ -172,7 +205,20 @@ def parseServerHello(hdr, pkt):
 ###################
 # BEGIN EXECUTION #
 ###################
+print "Begin Execution"
 
+# Register a signal for Ctrl-C
+signal.signal(signal.SIGINT, deathBed)
+
+# Enable debugging
+dbg = True
+dbgFName = '/tmp/danish.log'
+if dbg:
+  try:
+    dbgFH = open(dbgFName, 'w+', 0)
+  except:
+    death("Error:Unable to open debug log file")
+    
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
 BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x02) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (src port 443)"
@@ -180,7 +226,7 @@ BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x02) and (tcp[((tcp[12:1] & 
 helloPR = initRx('br-lan', BPF_HELLO)
 replyPR = initRx('br-lan', BPF_REPLY)
 
-print "Begin Execution"
+
 while True:
   helloPR.dispatch(1, parseClientHello)
   replyPR.dispatch(1, parseServerHello)
