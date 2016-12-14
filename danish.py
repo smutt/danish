@@ -161,6 +161,10 @@ def parseClientHello(hdr, pkt):
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
     death("Error:TLS Packet captured not TLSHandshake")
 
+  if tlsRecord.version < 769:
+    dbgLog("Error:TLS version in ClientHello < 1.0")
+    return
+
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
   if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
     death("Error:TLSHandshake captured not ClientHello")
@@ -184,10 +188,17 @@ def parseServerHello(hdr, pkt):
     eth, ip, tcp = parseTCP(pkt)
   except DanishError:
     return
+
+  printPkt(hdr, pkt)
   
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake' :
     death("Error:TLS Packet captured not TLSHandshake")
+
+  # We only support TLS 1.2
+  if tlsRecord.version != 771:
+    dbgLog("Notice:TLS version in ServerHello not 1.2")
+    return
 
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
   if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ServerHello':
@@ -195,11 +206,9 @@ def parseServerHello(hdr, pkt):
 
   tlsServerHello = tlsHandshake.data
 
-  dbgLog(repr(tlsServerHello.extensions))
   
   
-  printPkt(hdr, pkt)
-  dumpPkt(hdr, pkt)
+
 
   
 ###################
