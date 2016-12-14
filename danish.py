@@ -161,8 +161,10 @@ def parseClientHello(hdr, pkt):
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
     death("Error:TLS Packet captured not TLSHandshake")
 
-  if tlsRecord.version < 769:
-    dbgLog("Error:TLS version in ClientHello < 1.0")
+  # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
+  if tlsRecord.version < 768:
+    dbgLog("Error:TLS version " + str(tlsRecord.version) + " in ClientHello < SSL 3.0")
+    dumpPkt(hdr, pkt)
     return
 
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
