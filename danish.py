@@ -14,14 +14,15 @@ class DanishError(Exception):
   pass
 
 
-# Print string then die
+# Print string then die with error
 def death(errStr=''):
   print errStr
   sys.exit(1)
 
   
-# Cleanup before dieing
-def deathBed(signal, frame):
+# Handle SIGINT and exit cleanly
+def handleSIGINT(signal, frame):
+  print "SIGINT caught, exiting"
   if dbg:
     dbgFH.close()
   sys.exit(0)
@@ -56,6 +57,20 @@ def initRx(iface, filt):
     death("Error:Bad capture filter")
     
   return pr
+
+
+# Change pcap character data to padded hex string without leading 0x
+# Currently not used
+def binToHexStr(val):
+  return hex(ord(val)).split("0x")[1].rjust(2, "0")
+
+
+# Change dpkt character bytes to string decimal values with a delimiter of delim between bytes
+def pcapToDecStr(bytes, delim):
+  rv = ""
+  for b in bytes:
+    rv += str(ord(b)) + delim
+  return rv.rstrip(delim)
 
 
 # Converts pcap data to Nibble String List
@@ -138,9 +153,6 @@ def printPkt(hdr, pkt):
 # Takes pcapy packet and returns 3 layers
 def parseTCP(pkt):
   eth = dpkt.ethernet.Ethernet(pkt)
-  if len(eth) < 140: # Sometimes pcapy gives us buffer leftovers
-    dbgLog("Warn:Captured packet < 140 bytes")
-    raise DanishError("Warn:Captured packet < 140 bytes")
     
   if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
     death("Error:Unsupported ethertype " + eth.type)
@@ -157,6 +169,9 @@ def parseClientHello(hdr, pkt):
   except DanishError:
     return
 
+  global awaitingReplies
+  awaitingReplies.append(' and host ' + pcapToDecStr(ip.dst, '.'))
+  
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
     death("Error:TLS Packet captured not TLSHandshake")
@@ -183,7 +198,7 @@ def parseClientHello(hdr, pkt):
 
   
 # Parses a TLS ServerHello packet
-# We will have to deal with TCP reassembly
+# We have to deal with TCP reassembly
 def parseServerHello(hdr, pkt):
   print "Entered parseServerHello"
   try:
@@ -191,25 +206,61 @@ def parseServerHello(hdr, pkt):
   except DanishError:
     return
 
+  print "tcp.seq:" + str(tcp.seq)
+  print "tcp.data.len:" + str(len(tcp.data))
   printPkt(hdr, pkt)
+
+  global tcpSegs
+  if tcp.seq in tcpSegs:
+    tls = dpkt.ssl.TLS(tcpSegs[tcp.seg].data + tcp.data)
+  else:
+    tls = dpkt.ssl.TLS(tcp.data)
+
+  print str(len(tls.records))
+   
+  for rec in tls.records:
+    try:
+      tlsRecord = dpkt.ssl.TLSRecord(rec)
+      
+    except dpkt.NeedData:
+      print "Caught fragment"
+      tcpSegs[tcp.seq + str(len(tcp.data))] = tcp
+      return
+
+
+
   
-  tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
-  if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake' :
-    death("Error:TLS Packet captured not TLSHandshake")
+  return
 
-  # We only support TLS 1.2
-  if tlsRecord.version != 771:
-    dbgLog("Notice:TLS version in ServerHello not 1.2")
-    return
 
-  tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
-  if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ServerHello':
-    death("Error:TLSHandshake captured not ServerHello")
+  tls = dpkt.ssl.TLS(tcp.data)
+  print str(len(tls.records))
 
-  tlsServerHello = tlsHandshake.data
+  for rec in tls.records:
+    try:
+      tlsRecord = dpkt.ssl.TLSRecord(rec)
+    except dpkt.NeedData:
+      print "Caught exception dpkt.NeedData"
+      break
 
-  
-  
+    if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake' :
+      death("Error:TLS Packet captured not TLSHandshake")
+
+    # We only support TLS 1.2
+    if tlsRecord.version != 771:
+      dbgLog("Notice:TLS version in ServerHello not 1.2")
+      return
+
+    print "\n" + repr(tlsRecord)
+
+
+    tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
+    if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ServerHello':
+      death("Error:TLSHandshake captured not ServerHello")
+
+    print repr(tlsHandshake)
+      
+    tlsServerHello = tlsHandshake.data
 
 
   
@@ -219,7 +270,13 @@ def parseServerHello(hdr, pkt):
 print "Begin Execution"
 
 # Register a signal for Ctrl-C
-signal.signal(signal.SIGINT, deathBed)
+signal.signal(signal.SIGINT, handleSIGINT)
+
+# Hosts we are awaiting a ServerHello reply from
+awaitingReplies = []
+
+# Unmatched TCP segments awaiting reassembly
+tcpSegs = {}
 
 # Enable debugging
 dbg = True
@@ -232,15 +289,17 @@ if dbg:
     
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
-BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x02) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (src port 443)"
+#BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x02) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (src port 443)"
+BPF_REPLY = "tcp and (src port 443)" # and ((tcp[12]|0xef) = 1)"
+#ACK == 1, RST == 0, SYN == 0, FIN == 0 
 
 helloPR = initRx('br-lan', BPF_HELLO)
-replyPR = initRx('br-lan', BPF_REPLY)
-
 
 while True:
   helloPR.dispatch(1, parseClientHello)
-  replyPR.dispatch(1, parseServerHello)
+  for src in awaitingReplies:
+    replyPR = initRx('br-lan', BPF_REPLY + src)
+    replyPR.dispatch(1, parseServerHello)
 
 
   
