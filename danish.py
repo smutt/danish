@@ -10,11 +10,9 @@ import dpkt
 import struct
 #import dns
 
-class DanishError(Exception):
-  pass
 
-# Holds entries that we have received Client Hellos for that we're awaiting ServerHellos
-class ClientHelloCache:
+# Superclass for ClientHello and ServerHello classes
+class DanishCache:
   def __init__(self):
     self._entries = {}
     self._delim = "_"
@@ -30,22 +28,42 @@ class ClientHelloCache:
 
   def __str__(self):
     return self.__repr__()
-  
-  def _idx(self, src, dst, sport):
-    return pcapToDecStr(str(src)) + self._delim + pcapToDecStr(str(dst)) + self._delim + str(sport)
 
-  def __delitem__(self, src, dst, sport):
-    del self._entries[self._idx(src, dst, sport)]
-
-  def append(self, src, dst, sport):
-    self._entries[self._idx(src, dst, sport)] = True
+  def __setitem__(self, k, v):
+    self._entries[k] = v
     
-  def exists(self, src, dst, sport):
-    if self._idx(src, dst, sport) in self._entries:
+  def __getitem__(self, k):
+    return self._entries[k]
+  
+  def __delitem__(self, k):
+    del self._entries[k]
+
+  def __contains__(self, k):
+    if k in self._entries:
       return True
     else:
       return False
-        
+
+  def idx(self, src, dst, port):
+    return pcapToDecStr(str(src)) + self._delim + pcapToDecStr(str(dst)) + self._delim + str(port)
+
+    
+# Holds entries that we have received Client Hellos for that we're awaiting ServerHellos
+class ClientHelloCache(DanishCache):
+  def append(self, k):
+    self._entries[k] = True
+
+    
+# Holds the TCP.data of fragments of Server Hello packets
+class ServerHelloCache(DanishCache):
+  # seq is an int, data is a string
+  # seq is the sequence number we are waiting to receive
+  def append(self, k, seq, data):
+    if k in self._entries:
+      self._entries[k] = [self._entries[k][0] + seq, self._entries[k][1] + data]
+    else:
+      self._entries[k] = [seq, data]
+      
 
 # Print string then die with error
 def death(errStr=''):
@@ -198,10 +216,7 @@ def parseTCP(pkt):
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
   print "\nEntered parseClientHello"
-  try:
-    eth, ip, tcp = parseTCP(pkt)
-  except DanishError:
-    return
+  eth, ip, tcp = parseTCP(pkt)
 
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
@@ -228,76 +243,80 @@ def parseClientHello(hdr, pkt):
   print "Client SNI:" + domain
 
   global chCache
-  chCache.append(ip.src, ip.dst, tcp.sport)
+  chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport))
   
   
 # Parses a TLS ServerHello packet
 # We have to deal with TCP reassembly
 def parseServerHello(hdr, pkt):
-  print "\nEntered parseServerHello"
-  try:
-    eth, ip, tcp = parseTCP(pkt)
-  except DanishError:
+  global chCache, shCache
+  if len(chCache) == 0:
     return
 
-  # This shouldn't happen
-  #if tcp.data.len == 0:
-  #  return
+  eth, ip, tcp = parseTCP(pkt)
+  if len(tcp.data) == 0:
+    return
+
+  print "\nEntered parseServerHello"
   
   #printPkt(hdr, pkt)
   #dumpPkt(pkt)
-  print "tcp.len:" + str(len(tcp))
+  #print "tcp.len:" + str(len(tcp))
   print "tcp.seq:" + str(tcp.seq)
   print "tcp.data.len:" + str(len(tcp.data))
   print "tcp.flags:" + hex(tcp.flags)
-
-  return
   
-  global chCache
-  if chCache.exists(ip.dst, ip.src, tcp.dport):
-    try:
-      tls = dpkt.ssl.TLS(tcp.data)
-    except dpkt.NeedData:
-      print "AAA NeedData"
-      global tcpSegs
-      if tcp.seq in tcpSegs:
-        tls = dpkt.ssl.TLS(tcpSegs[str(tcp.seq)].data + tcp.data)
+  chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
+  shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
+  if chIdx in chCache:
+    if shIdx in shCache:
+      if shCache[shIdx][0] == tcp.seq:
+        try:
+          tls = dpkt.ssl.TLS(shCache[shIdx][1] + tcp.data)
+          print "TLS-1"
+          print str(len(tls.records))
+          del chCache[chIdx]
+          del shCache[shIdx]
+          parseCert(ip, tls)
+        except dpkt.NeedData:
+          print "NeedData-1"
+          shCache.append(shIdx, len(tcp.data), tcp.data)
+          print "shIdx.seq:" + str(shCache[shIdx][0])
+    else:
+      try:
+        tls = dpkt.ssl.TLS(tcp.data)
+        print "TLS-2"
         print str(len(tls.records))
-      else:
-        tcpSegs[str(tcp.seq) + str(len(tcp.data))] = tcp
-  else:
-    print "AAA Wrong packet"
-    print str(chCache)
-  return
+        del chCache[chIdx]
+        del shCache[shIdx]
+        parseCert(ip, tls)
+      except dpkt.NeedData:
+        print "NeedData-2"
+        shCache.append(shIdx, tcp.seq + len(tcp.data), tcp.data)
+        print "shIdx.seq:" + str(shCache[shIdx][0])
 
-  tls = dpkt.ssl.TLS(tcp.data)
-  print str(len(tls.records))
-
+def parseCert(ip, tls):
+  print "\nEntered parseCert"
   for rec in tls.records:
-    try:
-      tlsRecord = dpkt.ssl.TLSRecord(rec)
-    except dpkt.NeedData:
-      print "Caught exception dpkt.NeedData"
-      break
-
-    if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake' :
-      death("Error:TLS Packet captured not TLSHandshake")
+    if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
+      death("Error:TLS Record not TLSHandshake")
 
     # We only support TLS 1.2
-    if tlsRecord.version != 771:
-      dbgLog("Notice:TLS version in ServerHello not 1.2")
+    if rec.version != 771:
+      dbgLog("Notice:TLS version in ServerHello Record not 1.2")
       return
+    
+    #print repr(rec.data)
 
-    print "\n" + repr(tlsRecord)
+  return
+    
+#tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
+#if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ServerHello':
+#      death("Error:TLSHandshake captured not ServerHello")
 
 
-    tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
-    if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ServerHello':
-      death("Error:TLSHandshake captured not ServerHello")
-
-    print repr(tlsHandshake)
       
-    tlsServerHello = tlsHandshake.data
+
 
 
   
@@ -309,11 +328,9 @@ print "Begin Execution"
 # Register a signal for Ctrl-C
 signal.signal(signal.SIGINT, handleSIGINT)
 
-# Initialize our global ClientHelloCache
+# Initialize our caches
 chCache = ClientHelloCache()
-
-# Unmatched TCP segments awaiting reassembly
-tcpSegs = {}
+shCache = ServerHelloCache()
 
 # Enable debugging
 dbg = True
