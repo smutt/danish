@@ -13,6 +13,39 @@ import struct
 class DanishError(Exception):
   pass
 
+# Holds entries that we have received Client Hellos for that we're awaiting ServerHellos
+class ClientHelloCache:
+  def __init__(self):
+    self._entries = {}
+    self._delim = "_"
+
+  def __len__(self):
+    return len(self._entries)
+
+  def __repr__(self):
+    rv = ''
+    for k in self._entries.keys():
+      rv += k + ' '
+    return rv.strip()
+
+  def __str__(self):
+    return self.__repr__()
+  
+  def _idx(self, src, dst, sport):
+    return pcapToDecStr(str(src)) + self._delim + pcapToDecStr(str(dst)) + self._delim + str(sport)
+
+  def __delitem__(self, src, dst, sport):
+    del self._entries[self._idx(src, dst, sport)]
+
+  def append(self, src, dst, sport):
+    self._entries[self._idx(src, dst, sport)] = True
+    
+  def exists(self, src, dst, sport):
+    if self._idx(src, dst, sport) in self._entries:
+      return True
+    else:
+      return False
+        
 
 # Print string then die with error
 def death(errStr=''):
@@ -40,14 +73,14 @@ def dbgLog(dbgStr):
 
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
-def initRx(iface, filt):
+def initRx(iface, filt, timeout):
   if(os.getuid() or os.geteuid()):
     death("Error:Requires root access")
     
   if not iface in pcap.findalldevs():
     death("Error:Bad interface " + iface)
     
-  pr = pcap.open_live(iface, 65536, True, 10)
+  pr = pcap.open_live(iface, 65536, True, timeout)
   if pr.datalink() != pcap.DLT_EN10MB:
     death("Error:Interface not Ethernet " + iface)
     
@@ -66,7 +99,7 @@ def binToHexStr(val):
 
 
 # Change dpkt character bytes to string decimal values with a delimiter of delim between bytes
-def pcapToDecStr(bytes, delim):
+def pcapToDecStr(bytes, delim="."):
   rv = ""
   for b in bytes:
     rv += str(ord(b)) + delim
@@ -105,7 +138,7 @@ def printNibbles(chars):
 
     
 # Writes a packet to /tmp/danish.pcap
-def dumpPkt(hdr, pkt):
+def dumpPkt(pkt):
   fh = open('/tmp/danish.pcap', 'wb')
   df = dpkt.pcap.Writer(fh)
   df.writepkt(pkt)
@@ -114,9 +147,10 @@ def dumpPkt(hdr, pkt):
   
 # Prints a packet for debugging, can assume it's always TCP
 def printPkt(hdr, pkt):
-  # Print timestamps  
-  tAbs, tRel = hdr.getts()
-  print "\ntAbs>" + str(tAbs) + " tRel>" + str(tRel) + " " 
+  # Print timestamps
+  if hdr:
+    tAbs, tRel = hdr.getts()
+    print "tAbs>" + str(tAbs) + " tRel>" + str(tRel) + " " 
 
   s = dpktDataToNibStrList(pkt)
   
@@ -163,15 +197,12 @@ def parseTCP(pkt):
   
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
-  print "Entered parseClientHello"
+  print "\nEntered parseClientHello"
   try:
     eth, ip, tcp = parseTCP(pkt)
   except DanishError:
     return
 
-  global awaitingReplies
-  awaitingReplies.append(' and host ' + pcapToDecStr(ip.dst, '.'))
-  
   tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
   if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
     death("Error:TLS Packet captured not TLSHandshake")
@@ -179,7 +210,7 @@ def parseClientHello(hdr, pkt):
   # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
   if tlsRecord.version < 768:
     dbgLog("Error:TLS version " + str(tlsRecord.version) + " in ClientHello < SSL 3.0")
-    dumpPkt(hdr, pkt)
+    dumpPkt(pkt)
     return
 
   tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
@@ -196,42 +227,48 @@ def parseClientHello(hdr, pkt):
   domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
   print "Client SNI:" + domain
 
+  global chCache
+  chCache.append(ip.src, ip.dst, tcp.sport)
+  
   
 # Parses a TLS ServerHello packet
 # We have to deal with TCP reassembly
 def parseServerHello(hdr, pkt):
-  print "Entered parseServerHello"
+  print "\nEntered parseServerHello"
   try:
     eth, ip, tcp = parseTCP(pkt)
   except DanishError:
     return
 
+  # This shouldn't happen
+  #if tcp.data.len == 0:
+  #  return
+  
+  #printPkt(hdr, pkt)
+  #dumpPkt(pkt)
+  print "tcp.len:" + str(len(tcp))
   print "tcp.seq:" + str(tcp.seq)
   print "tcp.data.len:" + str(len(tcp.data))
-  printPkt(hdr, pkt)
+  print "tcp.flags:" + hex(tcp.flags)
 
-  global tcpSegs
-  if tcp.seq in tcpSegs:
-    tls = dpkt.ssl.TLS(tcpSegs[tcp.seg].data + tcp.data)
-  else:
-    tls = dpkt.ssl.TLS(tcp.data)
-
-  print str(len(tls.records))
-   
-  for rec in tls.records:
-    try:
-      tlsRecord = dpkt.ssl.TLSRecord(rec)
-      
-    except dpkt.NeedData:
-      print "Caught fragment"
-      tcpSegs[tcp.seq + str(len(tcp.data))] = tcp
-      return
-
-
-
-  
   return
-
+  
+  global chCache
+  if chCache.exists(ip.dst, ip.src, tcp.dport):
+    try:
+      tls = dpkt.ssl.TLS(tcp.data)
+    except dpkt.NeedData:
+      print "AAA NeedData"
+      global tcpSegs
+      if tcp.seq in tcpSegs:
+        tls = dpkt.ssl.TLS(tcpSegs[str(tcp.seq)].data + tcp.data)
+        print str(len(tls.records))
+      else:
+        tcpSegs[str(tcp.seq) + str(len(tcp.data))] = tcp
+  else:
+    print "AAA Wrong packet"
+    print str(chCache)
+  return
 
   tls = dpkt.ssl.TLS(tcp.data)
   print str(len(tls.records))
@@ -272,8 +309,8 @@ print "Begin Execution"
 # Register a signal for Ctrl-C
 signal.signal(signal.SIGINT, handleSIGINT)
 
-# Hosts we are awaiting a ServerHello reply from
-awaitingReplies = []
+# Initialize our global ClientHelloCache
+chCache = ClientHelloCache()
 
 # Unmatched TCP segments awaiting reassembly
 tcpSegs = {}
@@ -289,18 +326,18 @@ if dbg:
     
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
-#BPF_REPLY = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x02) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (src port 443)"
-BPF_REPLY = "tcp and (src port 443)" # and ((tcp[12]|0xef) = 1)"
+BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
+  ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1)'
 #ACK == 1, RST == 0, SYN == 0, FIN == 0 
 
-helloPR = initRx('br-lan', BPF_HELLO)
+helloPR = initRx('br-lan', BPF_HELLO, 10)
+replyPR = initRx('br-lan', BPF_REPLY, 100)
 
+#print str(replyPR.getnonblock())
+#replyPR.setnonblock(1)
 while True:
   helloPR.dispatch(1, parseClientHello)
-  for src in awaitingReplies:
-    replyPR = initRx('br-lan', BPF_REPLY + src)
-    replyPR.dispatch(1, parseServerHello)
-
+  replyPR.dispatch(1, parseServerHello)
 
   
 print "End Execution"
