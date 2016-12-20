@@ -50,8 +50,8 @@ class DanishCache:
     
 # Holds entries that we have received Client Hellos for that we're awaiting ServerHellos
 class ClientHelloCache(DanishCache):
-  def append(self, k):
-    self._entries[k] = True
+  def append(self, k, SNI):
+    self._entries[k] = SNI
 
     
 # Holds the TCP.data of fragments of Server Hello packets
@@ -243,7 +243,7 @@ def parseClientHello(hdr, pkt):
   print "Client SNI:" + domain
 
   global chCache
-  chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport))
+  chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
   
   
 # Parses a TLS ServerHello packet
@@ -275,9 +275,10 @@ def parseServerHello(hdr, pkt):
           tls = dpkt.ssl.TLS(shCache[shIdx][1] + tcp.data)
           print "TLS-1"
           print str(len(tls.records))
+          SNI = chCache[chIdx]
           del chCache[chIdx]
           del shCache[shIdx]
-          parseCert(ip, tls)
+          parseCert(SNI, ip, tls)
         except dpkt.NeedData:
           print "NeedData-1"
           shCache.append(shIdx, len(tcp.data), tcp.data)
@@ -287,15 +288,16 @@ def parseServerHello(hdr, pkt):
         tls = dpkt.ssl.TLS(tcp.data)
         print "TLS-2"
         print str(len(tls.records))
+        SNI = chCache[chIdx]
         del chCache[chIdx]
         del shCache[shIdx]
-        parseCert(ip, tls)
+        parseCert(SNI, ip, tls)
       except dpkt.NeedData:
         print "NeedData-2"
         shCache.append(shIdx, tcp.seq + len(tcp.data), tcp.data)
         print "shIdx.seq:" + str(shCache[shIdx][0])
 
-def parseCert(ip, tls):
+def parseCert(SNI, ip, tls):
   print "\nEntered parseCert"
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
@@ -306,18 +308,16 @@ def parseCert(ip, tls):
       dbgLog("Notice:TLS version in ServerHello Record not 1.2")
       return
     
-    #print repr(rec.data)
+    print "record.type:" + str(rec.type)
 
-  return
-    
-#tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
-#if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ServerHello':
-#      death("Error:TLSHandshake captured not ServerHello")
+    tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
+    print "handshake.type:" + str(tlsHandshake.type)
 
-
-      
-
-
+    if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
+      tlsCertificate = tlsHandshake.data
+      print "lenCerts:" + str(len(tlsCertificate.certificates))
+      for cert in tlsCertificate.certificates:
+        print "cert:" + repr(cert)
 
   
 ###################
