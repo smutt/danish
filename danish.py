@@ -8,6 +8,7 @@ import signal
 import pcapy as pcap
 import dpkt
 import struct
+import binascii
 #import dns
 
 
@@ -83,12 +84,16 @@ def handleSIGINT(signal, frame):
 def dbgLog(dbgStr):
   dt = datetime.datetime.now()
   ts = dt.strftime("%b %d %H:%M:%S.%f") + " "
-  try:
-    dbgFH.write(ts + str(dbgStr) + '\n')
-  except IOError:
-    death("Error:IOError writing to debug file " + dbgFName)
 
+  if dbg == 'file':
+    try:
+      dbgFH.write(ts + str(dbgStr) + '\n')
+    except IOError:
+      death("Error:IOError writing to debug file " + dbgFName)
+  elif dbg == 'tty':
+    print ts + str(dbgStr)
 
+    
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
 def initRx(iface, filt, timeout):
@@ -217,33 +222,37 @@ def parseTCP(pkt):
 def parseClientHello(hdr, pkt):
   print "\nEntered parseClientHello"
   eth, ip, tcp = parseTCP(pkt)
+  tls = dpkt.ssl.TLS(tcp.data)
 
-  tlsRecord = dpkt.ssl.TLSRecord(tcp.data)
-  if dpkt.ssl.RECORD_TYPES[tlsRecord.type].__name__ != 'TLSHandshake':
-    death("Error:TLS Packet captured not TLSHandshake")
+  # It's possible to have more than 1 record in the 1st TLS message
+  # But I've never actually seen it and our BPF should prevent it from getting here
+  for rec in tls.records:
+    if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
+      dbgLog("Warn:TLS ClientHello contains record other than TLSHandshake " + str(rec.type))
+      next
 
-  # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
-  if tlsRecord.version < 768:
-    dbgLog("Error:TLS version " + str(tlsRecord.version) + " in ClientHello < SSL 3.0")
-    dumpPkt(pkt)
-    return
+    # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
+    if rec.version < 768:
+      dbgLog("Error:TLS version " + str(rec.version) + " in ClientHello < SSL 3.0")
+      dumpPkt(pkt)
+      return
+    
+    tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
+    if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
+      dbgLog("Error:TLSHandshake captured not ClientHello" + str(tlsHandshake.type))
 
-  tlsHandshake = dpkt.ssl.RECORD_TYPES[tlsRecord.type](tlsRecord.data)
-  if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
-    death("Error:TLSHandshake captured not ClientHello")
+    tlsClientHello = tlsHandshake.data
+    if 0 not in dict(tlsClientHello.extensions):
+      dbgLog("Error:SNI not found in TLS ClientHello")
 
-  tlsClientHello = tlsHandshake.data
-  if 0 not in dict(tlsClientHello.extensions):
-    death("Error:SNI not found in TLS ClientHello")
+    sni = dict(tlsClientHello.extensions)[0]
+    if struct.unpack("!B", sni[2:3])[0] != 0:
+      dbgLog("Error:SNI not a DNS name")
+    domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
+    dbgLog("Info:Client SNI:" + domain)
 
-  sni = dict(tlsClientHello.extensions)[0]
-  if struct.unpack("!B", sni[2:3])[0] != 0:
-    death("Error:SNI not a DNS name")
-  domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
-  print "Client SNI:" + domain
-
-  global chCache
-  chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
+    global chCache
+    chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
   
   
 # Parses a TLS ServerHello packet
@@ -256,15 +265,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-
-  print "\nEntered parseServerHello"
-  
-  #printPkt(hdr, pkt)
-  #dumpPkt(pkt)
-  #print "tcp.len:" + str(len(tcp))
-  print "tcp.seq:" + str(tcp.seq)
-  print "tcp.data.len:" + str(len(tcp.data))
-  print "tcp.flags:" + hex(tcp.flags)
+  print "\nparseServerHello TCP reassembly"
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
@@ -273,30 +274,23 @@ def parseServerHello(hdr, pkt):
       if shCache[shIdx][0] == tcp.seq:
         try:
           tls = dpkt.ssl.TLS(shCache[shIdx][1] + tcp.data)
-          print "TLS-1"
-          print str(len(tls.records))
           SNI = chCache[chIdx]
           del chCache[chIdx]
           del shCache[shIdx]
           parseCert(SNI, ip, tls)
         except dpkt.NeedData:
-          print "NeedData-1"
           shCache.append(shIdx, len(tcp.data), tcp.data)
-          print "shIdx.seq:" + str(shCache[shIdx][0])
     else:
       try:
         tls = dpkt.ssl.TLS(tcp.data)
-        print "TLS-2"
-        print str(len(tls.records))
         SNI = chCache[chIdx]
         del chCache[chIdx]
         del shCache[shIdx]
         parseCert(SNI, ip, tls)
       except dpkt.NeedData:
-        print "NeedData-2"
         shCache.append(shIdx, tcp.seq + len(tcp.data), tcp.data)
-        print "shIdx.seq:" + str(shCache[shIdx][0])
 
+        
 def parseCert(SNI, ip, tls):
   print "\nEntered parseCert"
   for rec in tls.records:
@@ -314,6 +308,7 @@ def parseCert(SNI, ip, tls):
     print "handshake.type:" + str(tlsHandshake.type)
 
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
+      print repr(tlsHandshake.data)
       tlsCertificate = tlsHandshake.data
       print "lenCerts:" + str(len(tlsCertificate.certificates))
       for cert in tlsCertificate.certificates:
@@ -333,9 +328,11 @@ chCache = ClientHelloCache()
 shCache = ServerHelloCache()
 
 # Enable debugging
-dbg = True
+#dbg = False
+#dbg = 'file'
+dbg = 'tty'
 dbgFName = '/tmp/danish.log'
-if dbg:
+if dbg == 'file':
   try:
     dbgFH = open(dbgFName, 'w+', 0)
   except:
