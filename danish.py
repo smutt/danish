@@ -5,11 +5,24 @@ sys.path.insert(0, sys.path[0] + '/dpkt/')
 import os
 import datetime
 import signal
-import pcapy as pcap
+import pcapy
 import dpkt
 import struct
 import binascii
-#import dns
+import dns.resolver
+import threading
+
+class DanishThread(threading.Thread):
+  pass
+
+# Perform a query for a TLSA RR then die
+class ReqThread(DanishThread):
+  def __init__(self, domain):
+    threading.Thread.__init__(self)
+    try:
+      dns.resolver.query('_443._tcp.' + domain, 'TLSA')
+    except:
+      pass
 
 
 # Superclass for ClientHello and ServerHello classes
@@ -75,7 +88,7 @@ def death(errStr=''):
 # Handle SIGINT and exit cleanly
 def handleSIGINT(signal, frame):
   print "SIGINT caught, exiting"
-  if dbg:
+  if dbg == 'file':
     dbgFH.close()
   sys.exit(0)
 
@@ -100,16 +113,16 @@ def initRx(iface, filt, timeout):
   if(os.getuid() or os.geteuid()):
     death("Error:Requires root access")
     
-  if not iface in pcap.findalldevs():
+  if not iface in pcapy.findalldevs():
     death("Error:Bad interface " + iface)
     
-  pr = pcap.open_live(iface, 65536, True, timeout)
-  if pr.datalink() != pcap.DLT_EN10MB:
+  pr = pcapy.open_live(iface, 65536, True, timeout)
+  if pr.datalink() != pcapy.DLT_EN10MB:
     death("Error:Interface not Ethernet " + iface)
     
   try:
     pr.setfilter(filt)
-  except pcap.PcapError:
+  except pcapy.PcapError:
     death("Error:Bad capture filter")
     
   return pr
@@ -220,12 +233,12 @@ def parseTCP(pkt):
   
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
-  print "\nEntered parseClientHello"
+  dbgLog("Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
   tls = dpkt.ssl.TLS(tcp.data)
 
-  # It's possible to have more than 1 record in the 1st TLS message
-  # But I've never actually seen it and our BPF should prevent it from getting here
+  # It's possible to have more than 1 record in the 1st TLS message,
+  # but I've never actually seen it and our BPF should prevent it from getting here.
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
       dbgLog("Warn:TLS ClientHello contains record other than TLSHandshake " + str(rec.type))
@@ -253,6 +266,7 @@ def parseClientHello(hdr, pkt):
 
     global chCache
     chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
+    ReqThread(domain).start()
   
   
 # Parses a TLS ServerHello packet
@@ -265,7 +279,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  print "\nparseServerHello TCP reassembly"
+  dbgLog("parseServerHello TCP reassembly")
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
@@ -292,7 +306,7 @@ def parseServerHello(hdr, pkt):
 
         
 def parseCert(SNI, ip, tls):
-  print "\nEntered parseCert"
+  dbgLog("Entered parseCert")
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
       death("Error:TLS Record not TLSHandshake")
@@ -302,17 +316,11 @@ def parseCert(SNI, ip, tls):
       dbgLog("Notice:TLS version in ServerHello Record not 1.2")
       return
     
-    print "record.type:" + str(rec.type)
-
     tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
-    print "handshake.type:" + str(tlsHandshake.type)
-
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
-      print repr(tlsHandshake.data)
       tlsCertificate = tlsHandshake.data
-      print "lenCerts:" + str(len(tlsCertificate.certificates))
-      for cert in tlsCertificate.certificates:
-        print "cert:" + repr(cert)
+#      for cert in tlsCertificate.certificates:
+#        print "cert:" + repr(cert)
 
   
 ###################
@@ -341,14 +349,10 @@ if dbg == 'file':
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
 BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
-  ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1)'
-#ACK == 1, RST == 0, SYN == 0, FIN == 0 
+  ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1)' # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0 
 
 helloPR = initRx('br-lan', BPF_HELLO, 10)
 replyPR = initRx('br-lan', BPF_REPLY, 100)
-
-#print str(replyPR.getnonblock())
-#replyPR.setnonblock(1)
 while True:
   helloPR.dispatch(1, parseClientHello)
   replyPR.dispatch(1, parseServerHello)
