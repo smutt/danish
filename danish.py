@@ -8,7 +8,7 @@ import signal
 import pcapy
 import dpkt
 import struct
-import binascii
+#import binascii
 import dns.resolver
 import threading
 
@@ -16,13 +16,45 @@ class DanishThread(threading.Thread):
   pass
 
 # Perform a query for a TLSA RR then die
-class ReqThread(DanishThread):
+class ReqTLSAThread(DanishThread):
   def __init__(self, domain):
     threading.Thread.__init__(self)
     try:
       dns.resolver.query('_443._tcp.' + domain, 'TLSA')
     except:
       pass
+
+
+# Check passed SNI and certs against any TLSA records
+class CheckTLSAThread(DanishThread):
+  def __init__(self, domain, ip, certs):
+    threading.Thread.__init__(self)
+    try:
+      resp = dns.resolver.query('_443._tcp.' + domain, 'TLSA')
+    except dns.resolver.NXDOMAIN:
+      return
+    except dns.resolver.Timeout:
+      dbgLog("DNS timeout for " + domain)
+      return
+    except dns.resolver.YXDOMAIN:
+      dbgLog("DNS YXDOMAIN for " + domain)
+      return
+    except dns.resolver.NoAnswer:
+      dbgLog("DNS NoAnswer for " + domain)
+      return
+    except dns.resolver.NoNameservers:
+      dbgLog("DNS NoNameservers for " + domain)
+      return
+
+    RRs = []
+    for tlsa in resp:
+      if (tlsa.usage == 1 or tlsa.usage == 3) and tlsa.selector == 0: # Our current DANE limitations
+        RRs.append(tlsa)
+
+    if len(RRs) == 0:
+      return
+
+    dbgLog(str(len(RRs)))
 
 
 # Superclass for ClientHello and ServerHello classes
@@ -266,7 +298,7 @@ def parseClientHello(hdr, pkt):
 
     global chCache
     chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
-    ReqThread(domain).start()
+    ReqTLSAThread(domain).start()
   
   
 # Parses a TLS ServerHello packet
@@ -319,8 +351,7 @@ def parseCert(SNI, ip, tls):
     tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
       tlsCertificate = tlsHandshake.data
-#      for cert in tlsCertificate.certificates:
-#        print "cert:" + repr(cert)
+      CheckTLSAThread(SNI, ip, tlsCertificate.certificates).start()
 
   
 ###################
