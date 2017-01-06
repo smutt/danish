@@ -11,14 +11,21 @@ import struct
 #import binascii
 import dns.resolver
 import threading
+import hashlib
 
-class DanishThread(threading.Thread):
-  pass
+# Superclass for all of our threads
+class DanishThr(threading.Thread):
+  def __init__(self):
+    # Register a signal for Ctrl-C
+    signal.signal(signal.SIGINT, handleSIGINT)
+    dbgLog("Starting thread " + type(self).__name__)
+
 
 # Perform a query for a TLSA RR then die
-class ReqTLSAThread(DanishThread):
+class ReqThr(DanishThr):
   def __init__(self, domain):
     threading.Thread.__init__(self)
+    super(self.__class__, self).__init__()
     try:
       dns.resolver.query('_443._tcp.' + domain, 'TLSA')
     except:
@@ -26,35 +33,54 @@ class ReqTLSAThread(DanishThread):
 
 
 # Check passed SNI and certs against any TLSA records
-class CheckTLSAThread(DanishThread):
+class AuthThr(DanishThr):
+  mTypes = {
+    1: hashlib.sha256,
+    2: hashlib.sha512
+  }
+
   def __init__(self, domain, ip, certs):
     threading.Thread.__init__(self)
+    super(self.__class__, self).__init__()
     try:
       resp = dns.resolver.query('_443._tcp.' + domain, 'TLSA')
     except dns.resolver.NXDOMAIN:
       return
     except dns.resolver.Timeout:
-      dbgLog("DNS timeout for " + domain)
+      dbgLog("Error:DNS timeout for " + domain)
       return
     except dns.resolver.YXDOMAIN:
-      dbgLog("DNS YXDOMAIN for " + domain)
+      dbgLog("Error:DNS YXDOMAIN for " + domain)
       return
     except dns.resolver.NoAnswer:
-      dbgLog("DNS NoAnswer for " + domain)
+      dbgLog("Error:DNS NoAnswer for " + domain)
       return
     except dns.resolver.NoNameservers:
-      dbgLog("DNS NoNameservers for " + domain)
+      dbgLog("Error:DNS NoNameservers for " + domain)
       return
 
     RRs = []
     for tlsa in resp:
-      if (tlsa.usage == 1 or tlsa.usage == 3) and tlsa.selector == 0: # Our current DANE limitations
+      if (tlsa.usage == 1 or tlsa.usage == 3) and tlsa.selector == 0 and \
+         (tlsa.mtype > -1 and tlsa.mtype < 3): # Our current DANE limitations
         RRs.append(tlsa)
 
     if len(RRs) == 0:
       return
 
-    dbgLog(str(len(RRs)))
+    dbgLog("len_tlsa:" + str(len(RRs)))
+    dbgLog("len_certs:" + str(len(certs)))
+
+    passed = False
+    for tlsa in RRs:
+      for cert in certs:
+        if tlsa.mtype == 0:
+          if tlsa.cert == cert:
+            passed = True
+        elif tlsa.cert == AuthThr.mTypes[tlsa.mtype](cert).digest():
+          passed = True
+
+    dbgLog("passed:" + str(passed))
 
 
 # Superclass for ClientHello and ServerHello classes
@@ -160,10 +186,13 @@ def initRx(iface, filt, timeout):
   return pr
 
 
-# Change pcap character data to padded hex string without leading 0x
-# Currently not used
+# Change sequential binary data to padded hex string without leading 0x
+# Only used for debugging right now
 def binToHexStr(val):
-  return hex(ord(val)).split("0x")[1].rjust(2, "0")
+  rv = ''
+  for v in val:
+    rv += hex(ord(v)).split("0x")[1].rjust(2, "0")
+  return rv
 
 
 # Change dpkt character bytes to string decimal values with a delimiter of delim between bytes
@@ -274,7 +303,7 @@ def parseClientHello(hdr, pkt):
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
       dbgLog("Warn:TLS ClientHello contains record other than TLSHandshake " + str(rec.type))
-      next
+      continue
 
     # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
     if rec.version < 768:
@@ -298,7 +327,7 @@ def parseClientHello(hdr, pkt):
 
     global chCache
     chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
-    ReqTLSAThread(domain).start()
+    ReqThr(domain).start()
   
   
 # Parses a TLS ServerHello packet
@@ -341,19 +370,23 @@ def parseCert(SNI, ip, tls):
   dbgLog("Entered parseCert")
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
-      death("Error:TLS Record not TLSHandshake")
+      death("Error:TLS Record not TLSHandshake, " + SNI)
 
     # We only support TLS 1.2
     if rec.version != 771:
-      dbgLog("Notice:TLS version in ServerHello Record not 1.2")
+      dbgLog("Notice:TLS version in ServerHello Record not 1.2, " + SNI)
       return
     
     tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
       tlsCertificate = tlsHandshake.data
-      CheckTLSAThread(SNI, ip, tlsCertificate.certificates).start()
+      if len(tlsCertificate.certificates) < 1:
+        dbgLog("Error:ServerHello contains 0 certificates, " + SNI)
+        return
 
-  
+      AuthThr(SNI, ip, tlsCertificate.certificates).start()
+
+
 ###################
 # BEGIN EXECUTION #
 ###################
