@@ -18,12 +18,13 @@ class DanishThr(threading.Thread):
   def __init__(self):
     # Register a signal for Ctrl-C
     signal.signal(signal.SIGINT, handleSIGINT)
-    dbgLog("Starting thread " + type(self).__name__)
+    dbgLog("Starting thread " + type(self).__name__ + " for " + self.domain)
 
 
 # Perform a query for a TLSA RR then die
 class ReqThr(DanishThr):
   def __init__(self, domain):
+    self.domain = domain
     threading.Thread.__init__(self)
     super(self.__class__, self).__init__()
     try:
@@ -40,6 +41,8 @@ class AuthThr(DanishThr):
   }
 
   def __init__(self, domain, ip, certs):
+    self.domain = domain
+
     threading.Thread.__init__(self)
     super(self.__class__, self).__init__()
     try:
@@ -85,11 +88,14 @@ class AuthThr(DanishThr):
     if not passed:
       if 'thr_' + domain not in threading.enumerate(): # Defensive programming
         AclThr(domain, ip).start()
+      else:
+        dbgLog("Error:Thread thr_" + domain + " already running")
 
 
 # Installs an ACL into the Linux kernel and then manages it
 class AclThr(DanishThr):
   def __init__(self, domain, ip):
+    self.domain = domain
     threading.Thread.__init__(self, name='thr_' + domain)
     super(self.__class__, self).__init__()
 
