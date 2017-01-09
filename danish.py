@@ -66,6 +66,7 @@ class AuthThr(DanishThr):
         RRs.append(tlsa)
 
     if len(RRs) == 0:
+      dbgLog("No valid RRs found, returning")
       return
 
     dbgLog("len_tlsa:" + str(len(RRs)))
@@ -81,6 +82,16 @@ class AuthThr(DanishThr):
           passed = True
 
     dbgLog("passed:" + str(passed))
+    if not passed:
+      if 'thr_' + domain not in threading.enumerate(): # Defensive programming
+        AclThr(domain, ip).start()
+
+
+# Installs an ACL into the Linux kernel and then manages it
+class AclThr(DanishThr):
+  def __init__(self, domain, ip):
+    threading.Thread.__init__(self, name='thr_' + domain)
+    super(self.__class__, self).__init__()
 
 
 # Superclass for ClientHello and ServerHello classes
