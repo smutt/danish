@@ -12,6 +12,7 @@ import struct
 import dns.resolver
 import threading
 import hashlib
+import iptc
 
 # Superclass for all of our threads
 class DanishThr(threading.Thread):
@@ -56,7 +57,7 @@ class AuthThr(DanishThr):
       dbgLog("Error:DNS YXDOMAIN for " + domain)
       return
     except dns.resolver.NoAnswer:
-      dbgLog("Error:DNS NoAnswer for " + domain)
+      dbgLog("Notice:DNS NoAnswer for " + domain)
       return
     except dns.resolver.NoNameservers:
       dbgLog("Error:DNS NoNameservers for " + domain)
@@ -98,6 +99,33 @@ class AclThr(DanishThr):
     self.domain = domain
     threading.Thread.__init__(self, name='thr_' + domain)
     super(self.__class__, self).__init__()
+
+    # Our 3 rules
+    # We use ingress to mean from Internet to home
+    # We use egress to mean from home to Internet
+    self.preventAcl = iptc.Rule()
+    self.killEgrAcl = iptc.Rule()
+    self.killIngAcl = iptc.Rule()
+
+    self.killIngAcl.protocol = "tcp"
+    self.killIngAcl.src = pcapToDecStr(ip.src) + "/255.255.255.255"
+    self.killIngAcl.dst = pcapToDecStr(ip.dst) + "/255.255.255.255"
+    self.killIngAcl.sport = ip.data.sport
+    self.killIngAcl.dport = ip.data.dport
+#    self.killIngAcl.target = iptc.Target(self.killIngAcl, "DROP")
+#    self.killIngAcl.create_target("DROP")
+
+
+    self.killEgrAcl.protocol = "tcp"
+    self.killEgrAcl.src = pcapToDecStr(ip.dst) + "/255.255.255.255"
+    self.killEgrAcl.dst = pcapToDecStr(ip.src) + "/255.255.255.255"
+    self.killEgrAcl.sport = ip.data.dport
+    self.killEgrAcl.dport = ip.data.sport
+ #   self.killEgrAcl.target = iptc.Target(self.killEgrAcl, "DROP")
+
+
+    self.preventAcl.protocol = "tcp"
+
 
 
 # Superclass for ClientHello and ServerHello classes
