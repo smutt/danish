@@ -153,7 +153,10 @@ class DanishCache:
     return self._entries[k]
   
   def __delitem__(self, k):
-    del self._entries[k]
+    try:
+      del self._entries[k]
+    except:
+      pass
 
   def __contains__(self, k):
     if k in self._entries:
