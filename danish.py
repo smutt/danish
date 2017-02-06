@@ -14,13 +14,14 @@ import threading
 import hashlib
 #import iptc
 import subprocess as subp
+from time import sleep
 
 # Superclass for all of our threads
 class DanishThr(threading.Thread):
   def __init__(self):
     # Register a signal for Ctrl-C
     signal.signal(signal.SIGINT, handleSIGINT)
-    dbgLog("Starting thread " + type(self).__name__ + " for " + self.domain)
+    dbgLog("Info:Starting thread " + type(self).__name__ + " for " + self.domain)
 
 
 # Perform a query for a TLSA RR then die
@@ -44,9 +45,9 @@ class AuthThr(DanishThr):
 
   def __init__(self, domain, ip, certs):
     self.domain = domain
-
     threading.Thread.__init__(self)
     super(self.__class__, self).__init__()
+
     try:
       resp = dns.resolver.query('_443._tcp.' + domain, 'TLSA')
     except dns.resolver.NXDOMAIN:
@@ -67,15 +68,12 @@ class AuthThr(DanishThr):
     RRs = []
     for tlsa in resp:
       if (tlsa.usage == 1 or tlsa.usage == 3) and tlsa.selector == 0 and \
-         (tlsa.mtype > -1 and tlsa.mtype < 3): # Our current DANE limitations
+        (tlsa.mtype > -1 and tlsa.mtype < 3): # Our current DANE limitations
         RRs.append(tlsa)
 
     if len(RRs) == 0:
-      dbgLog("No valid RRs found, returning")
+      dbgLog("Info:No valid RRs found for " + domain)
       return
-
-    dbgLog("len_tlsa:" + str(len(RRs)))
-    dbgLog("len_certs:" + str(len(certs)))
 
     passed = False
     for tlsa in RRs:
@@ -86,7 +84,7 @@ class AuthThr(DanishThr):
         elif tlsa.cert == AuthThr.mTypes[tlsa.mtype](cert).digest():
           passed = True
 
-    dbgLog("passed:" + str(passed))
+    dbgLog("Info:AuthThr:passed:" + str(passed))
     if not passed:
       if 'thr_' + domain not in threading.enumerate(): # Defensive programming
         AclThr(domain, ip).start()
@@ -94,19 +92,65 @@ class AuthThr(DanishThr):
         dbgLog("Error:Thread thr_" + domain + " already running")
 
 
-# Installs an ACL into the Linux kernel and then manages it
+# Installs ACLs into the Linux kernel and then manages them
 class AclThr(DanishThr):
   def __init__(self, domain, ip):
     self.domain = domain
-    self.ip = ip
     threading.Thread.__init__(self, name='thr_' + domain)
     super(self.__class__, self).__init__()
 
-  def addAcls():
-    pass
+    # maxchars for iptables chain names is 29
+    self.chain = 'danish_' + hashlib.sha1(domain).hexdigest()[20:]
+    dbgLog("Info:chain:" + self.chain)
 
-  def delAcls():
-    pass
+    # ACL definitions
+    self.shortEgress4 = ' --destination ' +  pcapToDecStr(ip.src) + '/32' + \
+      ' --source ' + pcapToDecStr(ip.dst) + '/32 -p tcp --dport 443' + \
+      ' --sport ' + str(ip.data.dport) + ' -j DROP'
+    dbgLog("Info:shortEgress4:" + self.shortEgress4)
+
+    self.shortIngress4 = ' --destination ' +  pcapToDecStr(ip.dst) + '/32' + \
+      ' --source ' + pcapToDecStr(ip.src) + '/32 -p tcp --dport ' + \
+      str(ip.data.dport) + ' --sport 443 -j DROP'
+    dbgLog("Info:shortIngress4:" + self.shortIngress4)
+
+    # My testing shows SNI usually starts at byte 184
+    # We scan from byte 80 to packet-length to be safe
+    self.longEgress4 = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' --from 80 -j DROP'
+    dbgLog("Info:longIngress4:" + self.longEgress4)
+
+    self.addChain()
+    self.addShort()
+    self.addLong()
+    sleep(10)
+    self.delShort()
+    sleep(60)
+    self.delLong()
+    self.delChain()
+
+  def addChain(self):
+    ipt('--new ' + self.chain)
+    ipt('-I ' + self.chain + ' -j RETURN')
+    ipt('-I danish -j ' + self.chain)
+
+  def delChain(self):
+    ipt('-D danish -j ' + self.chain)
+    ipt('-F ' + self.chain)
+    ipt('--delete-chain ' + self.chain)
+
+  def addShort(self):
+    ipt('-I ' + self.chain + self.shortEgress4)
+    ipt('-I ' + self.chain + self.shortIngress4)
+
+  def delShort(self):
+    ipt('-D ' + self.chain + self.shortEgress4)
+    ipt('-D ' + self.chain + self.shortIngress4)
+
+  def addLong(self):
+    ipt('-I ' + self.chain + self.longEgress4)
+
+  def delLong(self):
+    ipt('-D ' + self.chain + self.longEgress4)
 
 
 # Superclass for ClientHello and ServerHello classes
@@ -184,6 +228,7 @@ def handleSIGINT(signal, frame):
     dbgFH.close()
 
   ipt('-D FORWARD -j danish')
+  ipt('-F danish')
   ipt('--delete-chain danish')
   sys.exit(0)
 
@@ -331,7 +376,7 @@ def parseTCP(pkt):
   
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
-  dbgLog("Entered parseClientHello")
+  dbgLog("Info:Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
   tls = dpkt.ssl.TLS(tcp.data)
 
@@ -377,7 +422,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  dbgLog("parseServerHello TCP reassembly")
+  dbgLog("Info:parseServerHello TCP reassembly")
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
@@ -404,7 +449,7 @@ def parseServerHello(hdr, pkt):
 
         
 def parseCert(SNI, ip, tls):
-  dbgLog("Entered parseCert")
+  dbgLog("Info:Entered parseCert")
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
       death("Error:TLS Record not TLSHandshake, " + SNI)
@@ -449,6 +494,7 @@ if dbg == 'file':
 
 # Init our master iptables chain
 ipt('--new danish')
+ipt('-I danish -j RETURN')
 ipt('-I FORWARD -j danish')
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
