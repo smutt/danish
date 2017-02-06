@@ -12,7 +12,8 @@ import struct
 import dns.resolver
 import threading
 import hashlib
-import iptc
+#import iptc
+import subprocess as subp
 
 # Superclass for all of our threads
 class DanishThr(threading.Thread):
@@ -97,35 +98,15 @@ class AuthThr(DanishThr):
 class AclThr(DanishThr):
   def __init__(self, domain, ip):
     self.domain = domain
+    self.ip = ip
     threading.Thread.__init__(self, name='thr_' + domain)
     super(self.__class__, self).__init__()
 
-    # Our 3 rules
-    # We use ingress to mean from Internet to home
-    # We use egress to mean from home to Internet
-    self.preventAcl = iptc.Rule()
-    self.killEgrAcl = iptc.Rule()
-    self.killIngAcl = iptc.Rule()
+  def addAcls():
+    pass
 
-    self.killIngAcl.protocol = "tcp"
-    self.killIngAcl.src = pcapToDecStr(ip.src) + "/255.255.255.255"
-    self.killIngAcl.dst = pcapToDecStr(ip.dst) + "/255.255.255.255"
-    self.killIngAcl.sport = ip.data.sport
-    self.killIngAcl.dport = ip.data.dport
-#    self.killIngAcl.target = iptc.Target(self.killIngAcl, "DROP")
-#    self.killIngAcl.create_target("DROP")
-
-
-    self.killEgrAcl.protocol = "tcp"
-    self.killEgrAcl.src = pcapToDecStr(ip.dst) + "/255.255.255.255"
-    self.killEgrAcl.dst = pcapToDecStr(ip.src) + "/255.255.255.255"
-    self.killEgrAcl.sport = ip.data.dport
-    self.killEgrAcl.dport = ip.data.sport
- #   self.killEgrAcl.target = iptc.Target(self.killEgrAcl, "DROP")
-
-
-    self.preventAcl.protocol = "tcp"
-
+  def delAcls():
+    pass
 
 
 # Superclass for ClientHello and ServerHello classes
@@ -185,6 +166,11 @@ class ServerHelloCache(DanishCache):
       self._entries[k] = [seq, data]
       
 
+# Calls iptables with passed string as args
+def ipt(s):
+  return subp.check_output(["/usr/sbin/iptables"] + s.split(' '))
+
+
 # Print string then die with error
 def death(errStr=''):
   print errStr
@@ -196,6 +182,9 @@ def handleSIGINT(signal, frame):
   print "SIGINT caught, exiting"
   if dbg == 'file':
     dbgFH.close()
+
+  ipt('-D FORWARD -j danish')
+  ipt('--delete-chain danish')
   sys.exit(0)
 
   
@@ -457,7 +446,11 @@ if dbg == 'file':
     dbgFH = open(dbgFName, 'w+', 0)
   except:
     death("Error:Unable to open debug log file")
-    
+
+# Init our master iptables chain
+ipt('--new danish')
+ipt('-I FORWARD -j danish')
+
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
 BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
