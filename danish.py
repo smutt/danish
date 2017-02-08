@@ -116,15 +116,15 @@ class AclThr(DanishThr):
 
     # My testing shows SNI usually starts at byte 184
     # We scan from byte 80 to packet-length to be safe
-    self.longEgress4 = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' --from 80 -j DROP'
+    self.longEgress4 = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
     dbgLog("Info:longIngress4:" + self.longEgress4)
 
     self.addChain()
     self.addShort()
     self.addLong()
-    sleep(10)
-    self.delShort()
     sleep(60)
+    self.delShort()
+    sleep(120)
     self.delLong()
     self.delChain()
 
