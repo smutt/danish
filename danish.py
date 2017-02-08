@@ -12,9 +12,8 @@ import struct
 import dns.resolver
 import threading
 import hashlib
-#import iptc
 import subprocess as subp
-from time import sleep
+from time import sleep, time
 
 # Superclass for all of our threads
 class DanishThr(threading.Thread):
@@ -86,7 +85,7 @@ class AuthThr(DanishThr):
 
     dbgLog("Info:AuthThr:passed:" + str(passed))
     if not passed:
-      if 'thr_' + domain not in threading.enumerate(): # Defensive programming
+      if 'thr_' + domain not in threading.enumerate(): # Defensive programming, this doesn't work for some reason :(
         AclThr(domain, ip).start()
       else:
         dbgLog("Error:Thread thr_" + domain + " already running")
@@ -99,8 +98,7 @@ class AclThr(DanishThr):
     threading.Thread.__init__(self, name='thr_' + domain)
     super(self.__class__, self).__init__()
 
-    # maxchars for iptables chain names is 29
-    self.chain = 'danish_' + hashlib.sha1(domain).hexdigest()[20:]
+    self.chain = genChainName(domain) 
     dbgLog("Info:chain:" + self.chain)
 
     # ACL definitions
@@ -114,19 +112,29 @@ class AclThr(DanishThr):
       str(ip.data.dport) + ' --sport 443 -j DROP'
     dbgLog("Info:shortIngress4:" + self.shortIngress4)
 
-    # My testing shows SNI usually starts at byte 184
-    # We scan from byte 80 to packet-length to be safe
     self.longEgress4 = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
     dbgLog("Info:longIngress4:" + self.longEgress4)
+
+    # Our ACL durations in seconds
+    shortSleep = 60
+    longSleep = 120
+    start = time()
 
     self.addChain()
     self.addShort()
     self.addLong()
-    sleep(60)
-    self.delShort()
-    sleep(120)
-    self.delLong()
-    self.delChain()
+
+    global KILLALL
+    while start + longSleep > time():
+      sleep(1)
+      if KILLALL:
+        print "Caught killall"
+        if self.shortActive:
+          self.delShort()
+        self.delLong()
+        self.delChain()
+      if time() > start + shortSleep:
+        self.delShort()
 
   def addChain(self):
     ipt('--new ' + self.chain)
@@ -141,10 +149,12 @@ class AclThr(DanishThr):
   def addShort(self):
     ipt('-I ' + self.chain + self.shortEgress4)
     ipt('-I ' + self.chain + self.shortIngress4)
+    self.shortActive = True
 
   def delShort(self):
     ipt('-D ' + self.chain + self.shortEgress4)
     ipt('-D ' + self.chain + self.shortIngress4)
+    self.shortActive = False
 
   def addLong(self):
     ipt('-I ' + self.chain + self.longEgress4)
@@ -215,7 +225,14 @@ def ipt(s):
   return subp.check_output(["/usr/sbin/iptables"] + s.split(' '))
 
 
+# Generates an iptables chain name based on domain
+# maxchars for iptables chain names is 29
+def genChainName(domain):
+  return 'danish_' + hashlib.sha1(domain).hexdigest()[20:]
+
+
 # Print string then die with error
+# Not thread safe
 def death(errStr=''):
   print errStr
   sys.exit(1)
@@ -226,6 +243,10 @@ def handleSIGINT(signal, frame):
   print "SIGINT caught, exiting"
   if dbg == 'file':
     dbgFH.close()
+
+  global KILLALL
+  KILLALL = True
+  sleep(2)
 
   ipt('-D FORWARD -j danish')
   ipt('-F danish')
@@ -476,6 +497,9 @@ print "Begin Execution"
 
 # Register a signal for Ctrl-C
 signal.signal(signal.SIGINT, handleSIGINT)
+
+# Set this to TRUE when it is time to kill all threads and die
+KILLALL = False
 
 # Initialize our caches
 chCache = ClientHelloCache()
