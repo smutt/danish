@@ -13,7 +13,8 @@ import dns.resolver
 import threading
 import hashlib
 import subprocess as subp
-from time import sleep, time
+from time import time
+import re
 
 # Superclass for all of our threads
 class DanishThr(threading.Thread):
@@ -101,40 +102,30 @@ class AclThr(DanishThr):
     self.chain = genChainName(domain) 
     dbgLog("Info:chain:" + self.chain)
 
+#    if genChainName(domain) in re.findall(re.compile('danish_[a-z,0-9]{20}'), ipt('-L danish')):
+#      dbgLog("Warn:thread:" + self.chain + " already running")
+
     # ACL definitions
     self.shortEgress4 = ' --destination ' +  pcapToDecStr(ip.src) + '/32' + \
       ' --source ' + pcapToDecStr(ip.dst) + '/32 -p tcp --dport 443' + \
       ' --sport ' + str(ip.data.dport) + ' -j DROP'
-    dbgLog("Info:shortEgress4:" + self.shortEgress4)
-
     self.shortIngress4 = ' --destination ' +  pcapToDecStr(ip.dst) + '/32' + \
       ' --source ' + pcapToDecStr(ip.src) + '/32 -p tcp --dport ' + \
       str(ip.data.dport) + ' --sport 443 -j DROP'
-    dbgLog("Info:shortIngress4:" + self.shortIngress4)
-
     self.longEgress4 = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
-    dbgLog("Info:longIngress4:" + self.longEgress4)
 
     # Our ACL durations in seconds
-    shortSleep = 60
-    longSleep = 120
-    start = time()
+    shortSleep = 20
+    longSleep = 40
 
     self.addChain()
     self.addShort()
     self.addLong()
 
-    global KILLALL
-    while start + longSleep > time():
-      sleep(1)
-      if KILLALL:
-        print "Caught killall"
-        if self.shortActive:
-          self.delShort()
-        self.delLong()
-        self.delChain()
-      if time() > start + shortSleep:
-        self.delShort()
+    shrt = threading.Timer(shortSleep, self.delShort)
+    lng = threading.Timer(longSleep, self.cleanUp)
+    shrt.start()
+    lng.start()
 
   def addChain(self):
     ipt('--new ' + self.chain)
@@ -147,20 +138,30 @@ class AclThr(DanishThr):
     ipt('--delete-chain ' + self.chain)
 
   def addShort(self):
+    dbgLog("Info:Adding shortEgress4:" + self.shortEgress4)
+    dbgLog("Info:Adding shortIngress4:" + self.shortIngress4)
     ipt('-I ' + self.chain + self.shortEgress4)
     ipt('-I ' + self.chain + self.shortIngress4)
     self.shortActive = True
 
   def delShort(self):
+    dbgLog("Info:Deleting shortEgress4:" + self.shortEgress4)
+    dbgLog("Info:Deleting shortIngress4:" + self.shortIngress4)
     ipt('-D ' + self.chain + self.shortEgress4)
     ipt('-D ' + self.chain + self.shortIngress4)
     self.shortActive = False
 
   def addLong(self):
+    dbgLog("Info:Adding longEgress4:" + self.longEgress4)
     ipt('-I ' + self.chain + self.longEgress4)
 
   def delLong(self):
+    dbgLog("Info:Deleting longEgress4:" + self.longEgress4)
     ipt('-D ' + self.chain + self.longEgress4)
+
+  def cleanUp(self):
+    self.delLong()
+    self.delChain()
 
 
 # Superclass for ClientHello and ServerHello classes
@@ -244,13 +245,17 @@ def handleSIGINT(signal, frame):
   if dbg == 'file':
     dbgFH.close()
 
-  global KILLALL
-  KILLALL = True
-  sleep(2)
-
+  # Clean up iptables
   ipt('-D FORWARD -j danish')
+  subChains = re.findall(re.compile('danish_[a-z,0-9]{20}'), ipt('-L danish'))
   ipt('-F danish')
-  ipt('--delete-chain danish')
+
+  for chain in subChains:
+    ipt('-F ' + chain)
+    ipt('-X ' + chain)
+
+  ipt('-X danish')
+
   sys.exit(0)
 
   
@@ -498,9 +503,6 @@ print "Begin Execution"
 # Register a signal for Ctrl-C
 signal.signal(signal.SIGINT, handleSIGINT)
 
-# Set this to TRUE when it is time to kill all threads and die
-KILLALL = False
-
 # Initialize our caches
 chCache = ClientHelloCache()
 shCache = ServerHelloCache()
@@ -529,6 +531,7 @@ BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tc
 helloPR = initRx('br-lan', BPF_HELLO, 10)
 replyPR = initRx('br-lan', BPF_REPLY, 100)
 while True:
+  print repr(threading.enumerate())
   helloPR.dispatch(1, parseClientHello)
   replyPR.dispatch(1, parseServerHello)
 
