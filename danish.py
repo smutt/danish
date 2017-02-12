@@ -16,22 +16,20 @@ import subprocess as subp
 from time import time
 import re
 
+
 # Superclass for all of our threads
 class DanishThr(threading.Thread):
-  def __init__(self):
-    # Register a signal for Ctrl-C
-    signal.signal(signal.SIGINT, handleSIGINT)
-    dbgLog("Info:Starting thread " + type(self).__name__ + " for " + self.domain)
+  def __init__(self, domain):
+    self.domain = domain
+    dbgLog("Info:Starting thread " + type(self).__name__ + '_' + self.domain)
+    threading.Thread.__init__(self, name=type(self).__name__ + '_' + self.domain)
 
 
 # Perform a query for a TLSA RR then die
 class ReqThr(DanishThr):
-  def __init__(self, domain):
-    self.domain = domain
-    threading.Thread.__init__(self)
-    super(self.__class__, self).__init__()
+  def run(self):
     try:
-      dns.resolver.query('_443._tcp.' + domain, 'TLSA')
+      dns.resolver.query('_443._tcp.' + self.domain, 'TLSA')
     except:
       pass
 
@@ -44,25 +42,26 @@ class AuthThr(DanishThr):
   }
 
   def __init__(self, domain, ip, certs):
-    self.domain = domain
-    threading.Thread.__init__(self)
-    super(self.__class__, self).__init__()
+    self.ip = ip
+    self.certs = certs
+    super(self.__class__, self).__init__(domain)
 
+  def run(self):
     try:
-      resp = dns.resolver.query('_443._tcp.' + domain, 'TLSA')
+      resp = dns.resolver.query('_443._tcp.' + self.domain, 'TLSA')
     except dns.resolver.NXDOMAIN:
       return
     except dns.resolver.Timeout:
-      dbgLog("Error:DNS timeout for " + domain)
+      dbgLog("Error:DNS timeout for " + self.domain)
       return
     except dns.resolver.YXDOMAIN:
-      dbgLog("Error:DNS YXDOMAIN for " + domain)
+      dbgLog("Error:DNS YXDOMAIN for " + self.domain)
       return
     except dns.resolver.NoAnswer:
-      dbgLog("Notice:DNS NoAnswer for " + domain)
+      dbgLog("Notice:DNS NoAnswer for " + self.domain)
       return
     except dns.resolver.NoNameservers:
-      dbgLog("Error:DNS NoNameservers for " + domain)
+      dbgLog("Error:DNS NoNameservers for " + self.domain)
       return
 
     RRs = []
@@ -72,58 +71,58 @@ class AuthThr(DanishThr):
         RRs.append(tlsa)
 
     if len(RRs) == 0:
-      dbgLog("Info:No valid RRs found for " + domain)
+      dbgLog("Info:No valid RRs found for " + self.domain)
       return
 
     passed = False
     for tlsa in RRs:
-      for cert in certs:
+      for cert in self.certs:
         if tlsa.mtype == 0:
           if tlsa.cert == cert:
             passed = True
         elif tlsa.cert == AuthThr.mTypes[tlsa.mtype](cert).digest():
           passed = True
 
-    dbgLog("Info:AuthThr:passed:" + str(passed))
+    dbgLog("Info:AuthThr_" + self.domain + ":passed:" + str(passed))
     if not passed:
-      if 'thr_' + domain not in threading.enumerate(): # Defensive programming, this doesn't work for some reason :(
-        AclThr(domain, ip).start()
+      if 'AclThr_' + self.domain not in threading.enumerate(): # Defensive programming
+        AclThr(self.domain, self.ip).start()
       else:
-        dbgLog("Error:Thread thr_" + domain + " already running")
+        dbgLog("Error:Thread thr_" + self.domain + " already running")
 
 
 # Installs ACLs into the Linux kernel and then manages them
 class AclThr(DanishThr):
-  def __init__(self, domain, ip):
-    self.domain = domain
-    threading.Thread.__init__(self, name='thr_' + domain)
-    super(self.__class__, self).__init__()
+  # Our ACL durations in seconds
+  shortSleep = 60
+  longSleep = 300
 
-    self.chain = genChainName(domain) 
+  def __init__(self, domain, ip):
+    self.ip = ip
+    super(self.__class__, self).__init__(domain)
+
+  def run(self):
+    self.chain = genChainName(self.domain) 
     dbgLog("Info:chain:" + self.chain)
 
-#    if genChainName(domain) in re.findall(re.compile('danish_[a-z,0-9]{20}'), ipt('-L danish')):
-#      dbgLog("Warn:thread:" + self.chain + " already running")
-
     # ACL definitions
-    self.shortEgress4 = ' --destination ' +  pcapToDecStr(ip.src) + '/32' + \
-      ' --source ' + pcapToDecStr(ip.dst) + '/32 -p tcp --dport 443' + \
-      ' --sport ' + str(ip.data.dport) + ' -j DROP'
-    self.shortIngress4 = ' --destination ' +  pcapToDecStr(ip.dst) + '/32' + \
-      ' --source ' + pcapToDecStr(ip.src) + '/32 -p tcp --dport ' + \
-      str(ip.data.dport) + ' --sport 443 -j DROP'
+    self.shortEgress4 = ' --destination ' +  pcapToDecStr(self.ip.src) + '/32' + \
+      ' --source ' + pcapToDecStr(self.ip.dst) + '/32 -p tcp --dport 443' + \
+      ' --sport ' + str(self.ip.data.dport) + ' -j DROP'
+    self.shortIngress4 = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/32' + \
+      ' --source ' + pcapToDecStr(self.ip.src) + '/32 -p tcp --dport ' + \
+      str(self.ip.data.dport) + ' --sport 443 -j DROP'
     self.longEgress4 = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
-
-    # Our ACL durations in seconds
-    shortSleep = 20
-    longSleep = 40
 
     self.addChain()
     self.addShort()
     self.addLong()
 
-    shrt = threading.Timer(shortSleep, self.delShort)
-    lng = threading.Timer(longSleep, self.cleanUp)
+    # Set timers to remove ACLs
+    shrt = threading.Timer(AclThr.shortSleep, self.delShort)
+    lng = threading.Timer(AclThr.longSleep, self.cleanUp)
+    shrt.name = name='Short_' + self.domain
+    lng.name = name='Long_' + self.domain
     shrt.start()
     lng.start()
 
@@ -223,7 +222,7 @@ class ServerHelloCache(DanishCache):
 
 # Calls iptables with passed string as args
 def ipt(s):
-  return subp.check_output(["/usr/sbin/iptables"] + s.split(' '))
+  return subp.check_output(["/usr/sbin/iptables"] + s.split())
 
 
 # Generates an iptables chain name based on domain
@@ -256,6 +255,7 @@ def handleSIGINT(signal, frame):
 
   ipt('-X danish')
 
+  dbgLog("About to exit")
   sys.exit(0)
 
   
@@ -266,10 +266,12 @@ def dbgLog(dbgStr):
 
   if dbg == 'file':
     try:
+      dbgFH.write("LiveThreads:" + repr(threading.enumerate()))
       dbgFH.write(ts + str(dbgStr) + '\n')
     except IOError:
       death("Error:IOError writing to debug file " + dbgFName)
   elif dbg == 'tty':
+    print "LiveThreads:" + repr(threading.enumerate())
     print ts + str(dbgStr)
 
     
@@ -531,7 +533,6 @@ BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tc
 helloPR = initRx('br-lan', BPF_HELLO, 10)
 replyPR = initRx('br-lan', BPF_REPLY, 100)
 while True:
-  print repr(threading.enumerate())
   helloPR.dispatch(1, parseClientHello)
   replyPR.dispatch(1, parseServerHello)
 
