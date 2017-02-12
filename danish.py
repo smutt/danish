@@ -21,7 +21,7 @@ import re
 class DanishThr(threading.Thread):
   def __init__(self, domain):
     self.domain = domain
-    dbgLog("Info:Starting thread " + type(self).__name__ + '_' + self.domain)
+    dbgLog(LOG_DEBUG, "Starting thread " + type(self).__name__ + '_' + self.domain)
     threading.Thread.__init__(self, name=type(self).__name__ + '_' + self.domain)
 
 
@@ -50,18 +50,19 @@ class AuthThr(DanishThr):
     try:
       resp = dns.resolver.query('_443._tcp.' + self.domain, 'TLSA')
     except dns.resolver.NXDOMAIN:
+      dbgLog(LOG_DEBUG, "DNS NXDOMAIN for " + self.domain)
       return
     except dns.resolver.Timeout:
-      dbgLog("Error:DNS timeout for " + self.domain)
+      dbgLog(LOG_ERROR, "DNS timeout for " + self.domain)
       return
     except dns.resolver.YXDOMAIN:
-      dbgLog("Error:DNS YXDOMAIN for " + self.domain)
+      dbgLog(LOG_ERROR, "DNS YXDOMAIN for " + self.domain)
       return
     except dns.resolver.NoAnswer:
-      dbgLog("Notice:DNS NoAnswer for " + self.domain)
+      dbgLog(LOG_INFO, "DNS NoAnswer for " + self.domain)
       return
     except dns.resolver.NoNameservers:
-      dbgLog("Error:DNS NoNameservers for " + self.domain)
+      dbgLog(LOG_ERROR, "DNS NoNameservers for " + self.domain)
       return
 
     RRs = []
@@ -71,7 +72,7 @@ class AuthThr(DanishThr):
         RRs.append(tlsa)
 
     if len(RRs) == 0:
-      dbgLog("Info:No valid RRs found for " + self.domain)
+      dbgLog(LOG_INFO, "No valid RRs found for " + self.domain)
       return
 
     passed = False
@@ -83,12 +84,12 @@ class AuthThr(DanishThr):
         elif tlsa.cert == AuthThr.mTypes[tlsa.mtype](cert).digest():
           passed = True
 
-    dbgLog("Info:AuthThr_" + self.domain + ":passed:" + str(passed))
+    dbgLog(LOG_INFO, "AuthThr_" + self.domain + ":passed:" + str(passed))
     if not passed:
       if 'AclThr_' + self.domain not in threading.enumerate(): # Defensive programming
         AclThr(self.domain, self.ip).start()
       else:
-        dbgLog("Error:Thread thr_" + self.domain + " already running")
+        dbgLog(LOG_ERROR, "Thread thr_" + self.domain + " already running")
 
 
 # Installs ACLs into the Linux kernel and then manages them
@@ -103,7 +104,7 @@ class AclThr(DanishThr):
 
   def run(self):
     self.chain = genChainName(self.domain) 
-    dbgLog("Info:chain:" + self.chain)
+    dbgLog(LOG_DEBUG, "chain:" + self.chain)
 
     # ACL definitions
     self.shortEgress4 = ' --destination ' +  pcapToDecStr(self.ip.src) + '/32' + \
@@ -121,8 +122,8 @@ class AclThr(DanishThr):
     # Set timers to remove ACLs
     shrt = threading.Timer(AclThr.shortSleep, self.delShort)
     lng = threading.Timer(AclThr.longSleep, self.cleanUp)
-    shrt.name = name='Short_' + self.domain
-    lng.name = name='Long_' + self.domain
+    shrt.name = name='TS_' + self.domain
+    lng.name = name='TL_' + self.domain
     shrt.start()
     lng.start()
 
@@ -137,25 +138,25 @@ class AclThr(DanishThr):
     ipt('--delete-chain ' + self.chain)
 
   def addShort(self):
-    dbgLog("Info:Adding shortEgress4:" + self.shortEgress4)
-    dbgLog("Info:Adding shortIngress4:" + self.shortIngress4)
+    dbgLog(LOG_DEBUG, "Adding shortEgress4:" + self.shortEgress4)
+    dbgLog(LOG_DEBUG, "Adding shortIngress4:" + self.shortIngress4)
     ipt('-I ' + self.chain + self.shortEgress4)
     ipt('-I ' + self.chain + self.shortIngress4)
     self.shortActive = True
 
   def delShort(self):
-    dbgLog("Info:Deleting shortEgress4:" + self.shortEgress4)
-    dbgLog("Info:Deleting shortIngress4:" + self.shortIngress4)
+    dbgLog(LOG_DEBUG, "Deleting shortEgress4:" + self.shortEgress4)
+    dbgLog(LOG_DEBUG, "Deleting shortIngress4:" + self.shortIngress4)
     ipt('-D ' + self.chain + self.shortEgress4)
     ipt('-D ' + self.chain + self.shortIngress4)
     self.shortActive = False
 
   def addLong(self):
-    dbgLog("Info:Adding longEgress4:" + self.longEgress4)
+    dbgLog(LOG_DEBUG, "Adding longEgress4:" + self.longEgress4)
     ipt('-I ' + self.chain + self.longEgress4)
 
   def delLong(self):
-    dbgLog("Info:Deleting longEgress4:" + self.longEgress4)
+    dbgLog(LOG_DEBUG, "Deleting longEgress4:" + self.longEgress4)
     ipt('-D ' + self.chain + self.longEgress4)
 
   def cleanUp(self):
@@ -240,9 +241,14 @@ def death(errStr=''):
   
 # Handle SIGINT and exit cleanly
 def handleSIGINT(signal, frame):
-  print "SIGINT caught, exiting"
+  dbgLog(LOG_INFO, "SIGINT caught, exiting")
   if dbg == 'file':
     dbgFH.close()
+
+  # Kill all timer threads
+  for thr in threading.enumerate():
+    if isinstance(thr, threading._Timer):
+      thr.cancel()
 
   # Clean up iptables
   ipt('-D FORWARD -j danish')
@@ -254,44 +260,58 @@ def handleSIGINT(signal, frame):
     ipt('-X ' + chain)
 
   ipt('-X danish')
-
-  dbgLog("About to exit")
   sys.exit(0)
 
   
-# Logs message to /tmp/danish.log
-def dbgLog(dbgStr):
+# Logs message to /tmp/danish.log or tty
+def dbgLog(lvl, dbgStr):
+  if lvl > logLvl:
+    return
+
+  logPrefix = {
+    LOG_ERROR: "Err",
+    LOG_WARN: "Wrn",
+    LOG_INFO: "Inf",
+    LOG_DEBUG: "Dbg",
+  }
+
   dt = datetime.datetime.now()
-  ts = dt.strftime("%b %d %H:%M:%S.%f") + " "
+  #ts = dt.strftime("%b %d %H:%M:%S.%f")
+  ts = dt.strftime("%H:%M:%S.%f")
+  outStr = ts + ">" + logPrefix[lvl] + ">" + dbgStr
+
+  if logLvl == LOG_DEBUG:
+    outStr += ">"
+    for thr in threading.enumerate():
+      outStr += thr.name + ","
+    outStr.strip(",")
 
   if dbg == 'file':
     try:
-      dbgFH.write("LiveThreads:" + repr(threading.enumerate()))
-      dbgFH.write(ts + str(dbgStr) + '\n')
+      dbgFH.write(outStr)
     except IOError:
-      death("Error:IOError writing to debug file " + dbgFName)
+      death("Err:IOError writing to debug file " + dbgFName)
   elif dbg == 'tty':
-    print "LiveThreads:" + repr(threading.enumerate())
-    print ts + str(dbgStr)
+    print outStr
 
     
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
 def initRx(iface, filt, timeout):
   if(os.getuid() or os.geteuid()):
-    death("Error:Requires root access")
+    death(LOG_ERROR, "Requires root access")
     
   if not iface in pcapy.findalldevs():
-    death("Error:Bad interface " + iface)
+    death(LOG_ERROR, "Bad interface " + iface)
     
   pr = pcapy.open_live(iface, 65536, True, timeout)
   if pr.datalink() != pcapy.DLT_EN10MB:
-    death("Error:Interface not Ethernet " + iface)
+    death(LOG_ERROR, "Interface not Ethernet " + iface)
     
   try:
     pr.setfilter(filt)
   except pcapy.PcapError:
-    death("Error:Bad capture filter")
+    death(LOG_ERROR, "Bad capture filter")
     
   return pr
 
@@ -396,7 +416,7 @@ def parseTCP(pkt):
   eth = dpkt.ethernet.Ethernet(pkt)
     
   if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
-    death("Error:Unsupported ethertype " + eth.type)
+    death(LOG_ERROR, "Unsupported ethertype " + eth.type)
 
   ip = eth.data
   return eth, ip, ip.data
@@ -404,7 +424,7 @@ def parseTCP(pkt):
   
 # Parses a TLS ClientHello packet
 def parseClientHello(hdr, pkt):
-  dbgLog("Info:Entered parseClientHello")
+  dbgLog(LOG_DEBUG, "Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
   tls = dpkt.ssl.TLS(tcp.data)
 
@@ -412,28 +432,33 @@ def parseClientHello(hdr, pkt):
   # but I've never actually seen it and our BPF should prevent it from getting here.
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
-      dbgLog("Warn:TLS ClientHello contains record other than TLSHandshake " + str(rec.type))
+      dbgLog(LOG_WARN, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type))
       continue
 
     # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
     if rec.version < 768:
-      dbgLog("Error:TLS version " + str(rec.version) + " in ClientHello < SSL 3.0")
+      dbgLog(LOG_WARN, "TLS version " + str(rec.version) + " in ClientHello < SSL 3.0")
       dumpPkt(pkt)
       return
     
     tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
-      dbgLog("Error:TLSHandshake captured not ClientHello" + str(tlsHandshake.type))
+      dbgLog(LOG_ERROR, "TLSHandshake captured not ClientHello" + str(tlsHandshake.type))
 
     tlsClientHello = tlsHandshake.data
     if 0 not in dict(tlsClientHello.extensions):
-      dbgLog("Error:SNI not found in TLS ClientHello")
+      dbgLog(LOG_ERROR, "SNI not found in TLS ClientHello")
 
     sni = dict(tlsClientHello.extensions)[0]
     if struct.unpack("!B", sni[2:3])[0] != 0:
-      dbgLog("Error:SNI not a DNS name")
+      dbgLog(LOG_ERROR, "SNI not a DNS name")
     domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
-    dbgLog("Info:Client SNI:" + domain)
+    dbgLog(LOG_INFO, "Client SNI:" + domain)
+
+    # We should not see these retry packets, but just in case
+    for thr in threading.enumerate():
+      if domain in thr.name:
+        return
 
     global chCache
     chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
@@ -450,7 +475,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  dbgLog("Info:parseServerHello TCP reassembly")
+  dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly")
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
@@ -477,21 +502,22 @@ def parseServerHello(hdr, pkt):
 
         
 def parseCert(SNI, ip, tls):
-  dbgLog("Info:Entered parseCert")
+  dbgLog(LOG_INFO, "Entered parseCert")
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
-      death("Error:TLS Record not TLSHandshake, " + SNI)
+      dbgLog(LOG_ERROR, "TLS Record not TLSHandshake, " + SNI)
+      death('Exiting')
 
     # We only support TLS 1.2
     if rec.version != 771:
-      dbgLog("Notice:TLS version in ServerHello Record not 1.2, " + SNI)
+      dbgLog(LOG_INFO, "TLS version in ServerHello Record not 1.2, " + SNI)
       return
     
     tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
       tlsCertificate = tlsHandshake.data
       if len(tlsCertificate.certificates) < 1:
-        dbgLog("Error:ServerHello contains 0 certificates, " + SNI)
+        dbgLog(LOG_ERROR, "ServerHello contains 0 certificates, " + SNI)
         return
 
       AuthThr(SNI, ip, tlsCertificate.certificates).start()
@@ -500,7 +526,26 @@ def parseCert(SNI, ip, tls):
 ###################
 # BEGIN EXECUTION #
 ###################
-print "Begin Execution"
+
+# Logging level constants
+LOG_ERROR = 1
+LOG_WARN = 2
+LOG_INFO = 3
+LOG_DEBUG = 4
+
+# Enable debugging
+#dbg = False
+#dbg = 'file'
+dbg = 'tty'
+dbgFName = '/tmp/danish.log'
+logLvl = LOG_DEBUG
+if dbg == 'file':
+  try:
+    dbgFH = open(dbgFName, 'w+', 0)
+  except:
+    death("Err:Unable to open debug log file")
+
+dbgLog(LOG_DEBUG, "Begin Execution")
 
 # Register a signal for Ctrl-C
 signal.signal(signal.SIGINT, handleSIGINT)
@@ -508,17 +553,6 @@ signal.signal(signal.SIGINT, handleSIGINT)
 # Initialize our caches
 chCache = ClientHelloCache()
 shCache = ServerHelloCache()
-
-# Enable debugging
-#dbg = False
-#dbg = 'file'
-dbg = 'tty'
-dbgFName = '/tmp/danish.log'
-if dbg == 'file':
-  try:
-    dbgFH = open(dbgFName, 'w+', 0)
-  except:
-    death("Error:Unable to open debug log file")
 
 # Init our master iptables chain
 ipt('--new danish')
@@ -535,6 +569,3 @@ replyPR = initRx('br-lan', BPF_REPLY, 100)
 while True:
   helloPR.dispatch(1, parseClientHello)
   replyPR.dispatch(1, parseServerHello)
-
-  
-print "End Execution"
