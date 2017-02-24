@@ -278,13 +278,13 @@ def dbgLog(lvl, dbgStr):
   dt = datetime.datetime.now()
   #ts = dt.strftime("%b %d %H:%M:%S.%f")
   ts = dt.strftime("%H:%M:%S.%f")
-  outStr = ts + ">" + logPrefix[lvl] + ">" + dbgStr
+  outStr = ts + "> " + logPrefix[lvl] + "> " + dbgStr
 
   if logLvl == LOG_DEBUG:
-    outStr += ">"
+    outStr += "> "
     for thr in threading.enumerate():
-      outStr += thr.name + ","
-    outStr.strip(",")
+      outStr += thr.name + " "
+    outStr.rstrip("")
 
   if dbg == 'file':
     try:
@@ -426,7 +426,13 @@ def parseTCP(pkt):
 def parseClientHello(hdr, pkt):
   dbgLog(LOG_DEBUG, "Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
-  tls = dpkt.ssl.TLS(tcp.data)
+
+  try:
+    tls = dpkt.ssl.TLS(tcp.data)
+  except dpkt.NeedData:
+    dbgLog(LOG_EROR, "TLS ClientHello TLSRecord data was too short")
+    dumpPkt(eth)
+    return
 
   # It's possible to have more than 1 record in the 1st TLS message,
   # but I've never actually seen it and our BPF should prevent it from getting here.
@@ -448,6 +454,7 @@ def parseClientHello(hdr, pkt):
     tlsClientHello = tlsHandshake.data
     if 0 not in dict(tlsClientHello.extensions):
       dbgLog(LOG_ERROR, "SNI not found in TLS ClientHello")
+      return
 
     sni = dict(tlsClientHello.extensions)[0]
     if struct.unpack("!B", sni[2:3])[0] != 0:
@@ -475,7 +482,8 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly")
+  #dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly")
+  #dbgLog(LOG_DEBUG, "parseServerHello:" + repr(ip.data))
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
@@ -505,8 +513,10 @@ def parseCert(SNI, ip, tls):
   dbgLog(LOG_INFO, "Entered parseCert")
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
-      dbgLog(LOG_ERROR, "TLS Record not TLSHandshake, " + SNI)
-      death('Exiting')
+      # This can happen if we receive data before the cache has been cleared 
+      dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake, " + SNI)
+      dbgLog(LOG_DEBUG, "ip.data:" + repr(ip.data))
+      return
 
     # We only support TLS 1.2
     if rec.version != 771:
@@ -562,10 +572,18 @@ ipt('-I FORWARD -j danish')
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
 BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
-  ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1)' # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0 
+  ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16)'
+  # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0 
 
+# Non-blocking status appears to vary by platform and libpcap version
 helloPR = initRx('br-lan', BPF_HELLO, 10)
+if not helloPR.getnonblock:
+  helloPR.setnonblock(1)
 replyPR = initRx('br-lan', BPF_REPLY, 100)
+if not replyPR.getnonblock:
+  replyPR.setnonblock(1)
+
 while True:
   helloPR.dispatch(1, parseClientHello)
   replyPR.dispatch(1, parseServerHello)
+
