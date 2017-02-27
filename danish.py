@@ -13,7 +13,6 @@ import dns.resolver
 import threading
 import hashlib
 import subprocess as subp
-from time import time
 import re
 
 
@@ -48,21 +47,22 @@ class AuthThr(DanishThr):
 
   def run(self):
     try:
-      resp = dns.resolver.query('_443._tcp.' + self.domain, 'TLSA')
+      qstr = '_443._tcp.' + self.domain
+      resp = dns.resolver.query(qstr, 'TLSA')
     except dns.resolver.NXDOMAIN:
-      dbgLog(LOG_DEBUG, "DNS NXDOMAIN for " + self.domain)
+      dbgLog(LOG_DEBUG, "NXDOMAIN for " + qstr)
       return
     except dns.resolver.Timeout:
-      dbgLog(LOG_ERROR, "DNS timeout for " + self.domain)
+      dbgLog(LOG_ERROR, "timeout for " + qstr)
       return
     except dns.resolver.YXDOMAIN:
-      dbgLog(LOG_ERROR, "DNS YXDOMAIN for " + self.domain)
+      dbgLog(LOG_ERROR, "YXDOMAIN for " + qstr)
       return
     except dns.resolver.NoAnswer:
-      dbgLog(LOG_INFO, "DNS NoAnswer for " + self.domain)
+      dbgLog(LOG_INFO, "NoAnswer for " + qstr)
       return
     except dns.resolver.NoNameservers:
-      dbgLog(LOG_ERROR, "DNS NoNameservers for " + self.domain)
+      dbgLog(LOG_ERROR, "NoNameservers for " + qstr)
       return
 
     RRs = []
@@ -72,7 +72,7 @@ class AuthThr(DanishThr):
         RRs.append(tlsa)
 
     if len(RRs) == 0:
-      dbgLog(LOG_INFO, "No valid RRs found for " + self.domain)
+      dbgLog(LOG_INFO, "No valid RRs found for " + qstr)
       return
 
     passed = False
@@ -166,9 +166,12 @@ class AclThr(DanishThr):
 
 # Superclass for ClientHello and ServerHello classes
 class DanishCache:
-  def __init__(self):
+  def __init__(self, name):
+    self._name = name
     self._entries = {}
+    self._ts = {}
     self._delim = "_"
+    self._timeout = datetime.timedelta(seconds=300) # Cache timeout
 
   def __len__(self):
     return len(self._entries)
@@ -184,6 +187,7 @@ class DanishCache:
 
   def __setitem__(self, k, v):
     self._entries[k] = v
+    self._ts = datetime.datetime.utcnow()
     
   def __getitem__(self, k):
     return self._entries[k]
@@ -203,13 +207,21 @@ class DanishCache:
   def idx(self, src, dst, port):
     return pcapToDecStr(str(src)) + self._delim + pcapToDecStr(str(dst)) + self._delim + str(port)
 
-    
+  def age(self):
+    dbgLog(LOG_DEBUG, "Initiating age for " + self._name + str(len(self)))
+    for k,ts in self._ts:
+      if ts + self._timeout > datetime.datetime.utcnow():
+        dbgLog(LOG_DEBUG, self._name + " deletion of " + k)
+        del self._entries[k]
+        del self._ts[k]
+
+
 # Holds entries that we have received Client Hellos for that we're awaiting ServerHellos
 class ClientHelloCache(DanishCache):
   def append(self, k, SNI):
     self._entries[k] = SNI
 
-    
+
 # Holds the TCP.data of fragments of Server Hello packets
 class ServerHelloCache(DanishCache):
   # seq is an int, data is a string
@@ -219,7 +231,7 @@ class ServerHelloCache(DanishCache):
       self._entries[k] = [self._entries[k][0] + seq, self._entries[k][1] + data]
     else:
       self._entries[k] = [seq, data]
-      
+
 
 # Calls iptables with passed string as args
 def ipt(s):
@@ -235,7 +247,7 @@ def genChainName(domain):
 # Print string then die with error
 # Not thread safe
 def death(errStr=''):
-  print errStr
+  print "FATAL:" + errStr
   sys.exit(1)
 
   
@@ -290,7 +302,7 @@ def dbgLog(lvl, dbgStr):
     try:
       dbgFH.write(outStr)
     except IOError:
-      death("Err:IOError writing to debug file " + dbgFName)
+      death("IOError writing to debug file " + dbgFName)
   elif dbg == 'tty':
     print outStr
 
@@ -299,36 +311,36 @@ def dbgLog(lvl, dbgStr):
 # Prints a string on failure and returns pcapy.Reader on success
 def initRx(iface, filt, timeout):
   if(os.getuid() or os.geteuid()):
-    death(LOG_ERROR, "Requires root access")
+    death("Requires root access")
     
   if not iface in pcapy.findalldevs():
-    death(LOG_ERROR, "Bad interface " + iface)
+    death("Bad interface " + iface)
     
   pr = pcapy.open_live(iface, 65536, True, timeout)
   if pr.datalink() != pcapy.DLT_EN10MB:
-    death(LOG_ERROR, "Interface not Ethernet " + iface)
+    death("Interface not Ethernet " + iface)
     
   try:
     pr.setfilter(filt)
   except pcapy.PcapError:
-    death(LOG_ERROR, "Bad capture filter")
+    death("Bad capture filter")
     
   return pr
 
 
-# Change sequential binary data to padded hex string without leading 0x
+# Change dpkt character bytes to padded hex string without leading 0x
 # Only used for debugging right now
-def binToHexStr(val):
+def pcapToHexStr(val, delim=":"):
   rv = ''
   for v in val:
-    rv += hex(ord(v)).split("0x")[1].rjust(2, "0")
+    rv += hex(ord(v)).split("0x")[1].rjust(2, "0") + delim
   return rv
 
 
 # Change dpkt character bytes to string decimal values with a delimiter of delim between bytes
-def pcapToDecStr(bytes, delim="."):
+def pcapToDecStr(val, delim="."):
   rv = ""
-  for b in bytes:
+  for b in val:
     rv += str(ord(b)) + delim
   return rv.rstrip(delim)
 
@@ -416,13 +428,14 @@ def parseTCP(pkt):
   eth = dpkt.ethernet.Ethernet(pkt)
     
   if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
-    death(LOG_ERROR, "Unsupported ethertype " + eth.type)
+    death("Unsupported ethertype " + eth.type)
 
   ip = eth.data
   return eth, ip, ip.data
 
   
 # Parses a TLS ClientHello packet
+# TODO:Check if it is a resumption of connection, if so ignore
 def parseClientHello(hdr, pkt):
   dbgLog(LOG_DEBUG, "Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
@@ -438,7 +451,7 @@ def parseClientHello(hdr, pkt):
   # but I've never actually seen it and our BPF should prevent it from getting here.
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
-      dbgLog(LOG_WARN, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type))
+      dbgLog(LOG_WARN, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type) + " ip.dst:" + pcapToHexStr(ip.dst))
       continue
 
     # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
@@ -449,22 +462,23 @@ def parseClientHello(hdr, pkt):
     
     tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
-      dbgLog(LOG_ERROR, "TLSHandshake captured not ClientHello" + str(tlsHandshake.type))
+      dbgLog(LOG_DEBUG, "TLSHandshake captured not ClientHello" + str(tlsHandshake.type))
 
     tlsClientHello = tlsHandshake.data
     if 0 not in dict(tlsClientHello.extensions):
-      dbgLog(LOG_ERROR, "SNI not found in TLS ClientHello")
+      dbgLog(LOG_DEBUG, "SNI not found in TLS ClientHello ip.dst:" + pcapToHexStr(ip.dst))
       return
 
     sni = dict(tlsClientHello.extensions)[0]
     if struct.unpack("!B", sni[2:3])[0] != 0:
-      dbgLog(LOG_ERROR, "SNI not a DNS name")
+      dbgLog(LOG_DEBUG, "SNI not a DNS name")
     domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
     dbgLog(LOG_INFO, "Client SNI:" + domain)
 
     # We should not see these retry packets, but just in case
     for thr in threading.enumerate():
-      if domain in thr.name:
+      if "AuthThr_" + domain in thr.name:
+        dbgLog(LOG_ERROR, "AuthThr_ " + domain + " already active")
         return
 
     global chCache
@@ -512,10 +526,9 @@ def parseServerHello(hdr, pkt):
 def parseCert(SNI, ip, tls):
   dbgLog(LOG_INFO, "Entered parseCert")
   for rec in tls.records:
-    if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake' :
-      # This can happen if we receive data before the cache has been cleared 
-      dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake, " + SNI)
-      dbgLog(LOG_DEBUG, "ip.data:" + repr(ip.data))
+    if rec.type != 22: # This can happen if we receive data before the cache has been cleared or on malformed packets
+      dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake(22), " + SNI)
+      #dbgLog(LOG_DEBUG, "ip.data:" + repr(ip.data))
       return
 
     # We only support TLS 1.2
@@ -523,13 +536,17 @@ def parseCert(SNI, ip, tls):
       dbgLog(LOG_INFO, "TLS version in ServerHello Record not 1.2, " + SNI)
       return
     
-    tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
+    try:
+      tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
+    except dpkt.ssl.SSL3Exception:
+      dbgLog(LOG_DEBUG, "TLS Handshake type not Certificate(11)" + SNI)
+      return
+
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
       tlsCertificate = tlsHandshake.data
       if len(tlsCertificate.certificates) < 1:
         dbgLog(LOG_ERROR, "ServerHello contains 0 certificates, " + SNI)
         return
-
       AuthThr(SNI, ip, tlsCertificate.certificates).start()
 
 
@@ -543,6 +560,9 @@ LOG_WARN = 2
 LOG_INFO = 3
 LOG_DEBUG = 4
 
+# Interval to trigger cache aging
+CACHE_AGE = datetime.timedelta(seconds=60)
+
 # Enable debugging
 #dbg = False
 #dbg = 'file'
@@ -553,7 +573,7 @@ if dbg == 'file':
   try:
     dbgFH = open(dbgFName, 'w+', 0)
   except:
-    death("Err:Unable to open debug log file")
+    death("Unable to open debug log file")
 
 dbgLog(LOG_DEBUG, "Begin Execution")
 
@@ -561,8 +581,8 @@ dbgLog(LOG_DEBUG, "Begin Execution")
 signal.signal(signal.SIGINT, handleSIGINT)
 
 # Initialize our caches
-chCache = ClientHelloCache()
-shCache = ServerHelloCache()
+chCache = ClientHelloCache('ClientCache')
+shCache = ServerHelloCache('ServerCache')
 
 # Init our master iptables chain
 ipt('--new danish')
@@ -572,18 +592,24 @@ ipt('-I FORWARD -j danish')
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
 BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
-  ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16)'
-  # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0 
+  ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1)'
+  # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0
+  # Must accept TCP fragments
 
 # Non-blocking status appears to vary by platform and libpcap version
 helloPR = initRx('br-lan', BPF_HELLO, 10)
-if not helloPR.getnonblock:
+if not helloPR.getnonblock():
   helloPR.setnonblock(1)
 replyPR = initRx('br-lan', BPF_REPLY, 100)
-if not replyPR.getnonblock:
+if not replyPR.getnonblock():
   replyPR.setnonblock(1)
 
+lastAge = datetime.datetime.utcnow()
 while True:
   helloPR.dispatch(1, parseClientHello)
-  replyPR.dispatch(1, parseServerHello)
+  replyPR.dispatch(1, parseServerHello) # TODO: Make this conditional on client cache entries existing, requires testing
 
+  if lastAge + CACHE_AGE < datetime.datetime.utcnow():
+    chCache.age()
+    shCache.age()
+    lastAge = datetime.datetime.utcnow()
