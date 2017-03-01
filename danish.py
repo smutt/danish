@@ -15,6 +15,27 @@ import hashlib
 import subprocess as subp
 import re
 
+#############
+# CONSTANTS #
+#############
+
+# Logging level constants
+LOG_ERROR = 1
+LOG_WARN = 2
+LOG_INFO = 3
+LOG_DEBUG = 4
+LOG_LEVEL = LOG_DEBUG
+LOG_OUTPUT = 'tty' # 'file' | False
+LOG_FNAME = '/tmp/danish.log'
+
+# Interval to trigger cache age check
+CACHE_AGE = datetime.timedelta(seconds=600)
+
+# TODO: Make iptables chain names constants here
+
+###########
+# Classes #
+###########
 
 # Superclass for all of our threads
 class DanishThr(threading.Thread):
@@ -165,13 +186,14 @@ class AclThr(DanishThr):
 
 
 # Superclass for ClientHello and ServerHello classes
+# TODO: Change name of append() function to something else
 class DanishCache:
   def __init__(self, name):
     self._name = name
     self._entries = {}
     self._ts = {}
     self._delim = "_"
-    self._timeout = datetime.timedelta(seconds=300) # Cache timeout
+    self._timeout = datetime.timedelta(seconds=61) # Cache timeout
 
   def __len__(self):
     return len(self._entries)
@@ -187,7 +209,7 @@ class DanishCache:
 
   def __setitem__(self, k, v):
     self._entries[k] = v
-    self._ts = datetime.datetime.utcnow()
+    self._ts[k] = datetime.datetime.utcnow()
     
   def __getitem__(self, k):
     return self._entries[k]
@@ -195,6 +217,7 @@ class DanishCache:
   def __delitem__(self, k):
     try:
       del self._entries[k]
+      del self._ts[k]
     except:
       pass
 
@@ -207,19 +230,21 @@ class DanishCache:
   def idx(self, src, dst, port):
     return pcapToDecStr(str(src)) + self._delim + pcapToDecStr(str(dst)) + self._delim + str(port)
 
+  # Set entries to None if cache ttl exceeded
   def age(self):
-    dbgLog(LOG_DEBUG, "Initiating age for " + self._name + str(len(self)))
-    for k,ts in self._ts:
-      if ts + self._timeout > datetime.datetime.utcnow():
+    dbgLog(LOG_DEBUG, "Initiating age for " + self._name + " l=" + str(len(self)))
+    for k, ts in self._ts.items():
+      if ts + self._timeout < datetime.datetime.utcnow():
         dbgLog(LOG_DEBUG, self._name + " deletion of " + k)
         del self._entries[k]
         del self._ts[k]
 
 
-# Holds entries that we have received Client Hellos for that we're awaiting ServerHellos
+# Holds entries that we have received Client Hellos for that we're awaiting ServerHellos,
+# and incomplete ServerHellos 
 class ClientHelloCache(DanishCache):
   def append(self, k, SNI):
-    self._entries[k] = SNI
+    self.__setitem__(k, SNI)
 
 
 # Holds the TCP.data of fragments of Server Hello packets
@@ -228,10 +253,14 @@ class ServerHelloCache(DanishCache):
   # seq is the sequence number we are waiting to receive
   def append(self, k, seq, data):
     if k in self._entries:
-      self._entries[k] = [self._entries[k][0] + seq, self._entries[k][1] + data]
+      self.__setitem__(k, [self._entries[k][0] + seq, self._entries[k][1] + data])
     else:
-      self._entries[k] = [seq, data]
+      self.__setitem__(k, [seq, data])
 
+
+####################
+# GLOBAL FUNCTIONS #
+####################
 
 # Calls iptables with passed string as args
 def ipt(s):
@@ -254,8 +283,8 @@ def death(errStr=''):
 # Handle SIGINT and exit cleanly
 def handleSIGINT(signal, frame):
   dbgLog(LOG_INFO, "SIGINT caught, exiting")
-  if dbg == 'file':
-    dbgFH.close()
+  if LOG_OUTPUT == 'file':
+    LOG_HANDLE.close()
 
   # Kill all timer threads
   for thr in threading.enumerate():
@@ -277,7 +306,10 @@ def handleSIGINT(signal, frame):
   
 # Logs message to /tmp/danish.log or tty
 def dbgLog(lvl, dbgStr):
-  if lvl > logLvl:
+  if not LOG_OUTPUT:
+    return
+
+  if lvl > LOG_LEVEL:
     return
 
   logPrefix = {
@@ -292,18 +324,18 @@ def dbgLog(lvl, dbgStr):
   ts = dt.strftime("%H:%M:%S.%f")
   outStr = ts + "> " + logPrefix[lvl] + "> " + dbgStr
 
-  if logLvl == LOG_DEBUG:
+  if LOG_LEVEL == LOG_DEBUG:
     outStr += "> "
     for thr in threading.enumerate():
       outStr += thr.name + " "
     outStr.rstrip("")
 
-  if dbg == 'file':
+  if LOG_OUTPUT == 'file':
     try:
-      dbgFH.write(outStr)
+      LOG_HANDLE.write(outStr)
     except IOError:
       death("IOError writing to debug file " + dbgFName)
-  elif dbg == 'tty':
+  elif LOG_OUTPUT == 'tty':
     print outStr
 
     
@@ -436,35 +468,45 @@ def parseTCP(pkt):
   
 # Parses a TLS ClientHello packet
 # TODO:Check if it is a resumption of connection, if so ignore
+# TODO:Figure out TLS 1.3
 def parseClientHello(hdr, pkt):
   dbgLog(LOG_DEBUG, "Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
 
   try:
     tls = dpkt.ssl.TLS(tcp.data)
-  except dpkt.NeedData:
-    dbgLog(LOG_EROR, "TLS ClientHello TLSRecord data was too short")
-    dumpPkt(eth)
+  except:
+    dbgLog(LOG_DEBUG, "Bad TLS ClientHello Record")
     return
 
   # It's possible to have more than 1 record in the 1st TLS message,
   # but I've never actually seen it and our BPF should prevent it from getting here.
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
-      dbgLog(LOG_WARN, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type) + " ip.dst:" + pcapToHexStr(ip.dst))
+      dbgLog(LOG_DEBUG, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type) + " ip.dst:" + pcapToHexStr(ip.dst))
       continue
 
     # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
     if rec.version < 768:
-      dbgLog(LOG_WARN, "TLS version " + str(rec.version) + " in ClientHello < SSL 3.0")
-      dumpPkt(pkt)
+      dbgLog(LOG_DEBUG, "TLS version " + str(rec.version) + " in ClientHello < SSL 3.0")
       return
-    
-    tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
+
+    try:
+      tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
+    except:
+      dbgLog(LOG_DEBUG, "Bad TLS Handshake in ClientHello")
+      return
+
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
       dbgLog(LOG_DEBUG, "TLSHandshake captured not ClientHello" + str(tlsHandshake.type))
+      return
 
-    tlsClientHello = tlsHandshake.data
+    try:
+      tlsClientHello = tlsHandshake.data
+    except:
+      dbgLog(LOG_DEBUG, "Bad TLS Extensions in ClientHello")
+      return
+
     if 0 not in dict(tlsClientHello.extensions):
       dbgLog(LOG_DEBUG, "SNI not found in TLS ClientHello ip.dst:" + pcapToHexStr(ip.dst))
       return
@@ -475,11 +517,12 @@ def parseClientHello(hdr, pkt):
     domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
     dbgLog(LOG_INFO, "Client SNI:" + domain)
 
-    # We should not see these retry packets, but just in case
+    # Don't do anything if we're already investigating this domain
     for thr in threading.enumerate():
-      if "AuthThr_" + domain in thr.name:
-        dbgLog(LOG_ERROR, "AuthThr_ " + domain + " already active")
-        return
+      if isinstance(thr, DanishThr):
+        if thr.name.split("_")[1] == domain:
+          dbgLog(LOG_DEBUG, thr.name + " already active")
+          return
 
     global chCache
     chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
@@ -554,24 +597,10 @@ def parseCert(SNI, ip, tls):
 # BEGIN EXECUTION #
 ###################
 
-# Logging level constants
-LOG_ERROR = 1
-LOG_WARN = 2
-LOG_INFO = 3
-LOG_DEBUG = 4
-
-# Interval to trigger cache aging
-CACHE_AGE = datetime.timedelta(seconds=60)
-
 # Enable debugging
-#dbg = False
-#dbg = 'file'
-dbg = 'tty'
-dbgFName = '/tmp/danish.log'
-logLvl = LOG_DEBUG
-if dbg == 'file':
+if LOG_OUTPUT == 'file':
   try:
-    dbgFH = open(dbgFName, 'w+', 0)
+    LOG_HANDLE = open(LOG_FNAME, 'w+', 0)
   except:
     death("Unable to open debug log file")
 
