@@ -25,7 +25,7 @@ LOG_WARN = 2
 LOG_INFO = 3
 LOG_DEBUG = 4
 LOG_LEVEL = LOG_DEBUG
-LOG_OUTPUT = 'tty' # 'file' | False
+LOG_OUTPUT = 'file' # 'tty' | 'file' | False
 LOG_FNAME = '/tmp/danish.log'
 
 # Interval to trigger cache age check
@@ -49,7 +49,8 @@ class DanishThr(threading.Thread):
 class ReqThr(DanishThr):
   def run(self):
     try:
-      dns.resolver.query('_443._tcp.' + self.domain, 'TLSA')
+      d = dns.resolver.Resolver()
+      d.query('_443._tcp.' + self.domain, 'TLSA')
     except:
       pass
 
@@ -69,7 +70,8 @@ class AuthThr(DanishThr):
   def run(self):
     try:
       qstr = '_443._tcp.' + self.domain
-      resp = dns.resolver.query(qstr, 'TLSA')
+      d = dns.resolver.Resolver()
+      d.query(qstr, 'TLSA')
     except dns.resolver.NXDOMAIN:
       dbgLog(LOG_DEBUG, "NXDOMAIN for " + qstr)
       return
@@ -186,14 +188,13 @@ class AclThr(DanishThr):
 
 
 # Superclass for ClientHello and ServerHello classes
-# TODO: Change name of append() function to something else
 class DanishCache:
   def __init__(self, name):
     self._name = name
     self._entries = {}
     self._ts = {}
     self._delim = "_"
-    self._timeout = datetime.timedelta(seconds=61) # Cache timeout
+    self._timeout = datetime.timedelta(seconds=3600) # Cache timeout
 
   def __len__(self):
     return len(self._entries)
@@ -243,7 +244,7 @@ class DanishCache:
 # Holds entries that we have received Client Hellos for that we're awaiting ServerHellos,
 # and incomplete ServerHellos 
 class ClientHelloCache(DanishCache):
-  def append(self, k, SNI):
+  def insert(self, k, SNI):
     self.__setitem__(k, SNI)
 
 
@@ -251,7 +252,7 @@ class ClientHelloCache(DanishCache):
 class ServerHelloCache(DanishCache):
   # seq is an int, data is a string
   # seq is the sequence number we are waiting to receive
-  def append(self, k, seq, data):
+  def insert(self, k, seq, data):
     if k in self._entries:
       self.__setitem__(k, [self._entries[k][0] + seq, self._entries[k][1] + data])
     else:
@@ -332,7 +333,7 @@ def dbgLog(lvl, dbgStr):
 
   if LOG_OUTPUT == 'file':
     try:
-      LOG_HANDLE.write(outStr)
+      LOG_HANDLE.write(outStr + '\n')
     except IOError:
       death("IOError writing to debug file " + dbgFName)
   elif LOG_OUTPUT == 'tty':
@@ -525,7 +526,7 @@ def parseClientHello(hdr, pkt):
           return
 
     global chCache
-    chCache.append(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
+    chCache.insert(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
     ReqThr(domain).start()
   
   
@@ -554,7 +555,7 @@ def parseServerHello(hdr, pkt):
           del shCache[shIdx]
           parseCert(SNI, ip, tls)
         except dpkt.NeedData:
-          shCache.append(shIdx, len(tcp.data), tcp.data)
+          shCache.insert(shIdx, len(tcp.data), tcp.data)
     else:
       try:
         tls = dpkt.ssl.TLS(tcp.data)
@@ -563,9 +564,9 @@ def parseServerHello(hdr, pkt):
         del shCache[shIdx]
         parseCert(SNI, ip, tls)
       except dpkt.NeedData:
-        shCache.append(shIdx, tcp.seq + len(tcp.data), tcp.data)
+        shCache.insert(shIdx, tcp.seq + len(tcp.data), tcp.data)
 
-        
+
 def parseCert(SNI, ip, tls):
   dbgLog(LOG_INFO, "Entered parseCert")
   for rec in tls.records:
