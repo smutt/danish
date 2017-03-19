@@ -274,13 +274,13 @@ def genChainName(domain):
   return 'danish_' + hashlib.sha1(domain).hexdigest()[20:]
 
 
-# Print string then die with error
+# Print string then die with error, dirty
 # Not thread safe
 def death(errStr=''):
   print "FATAL:" + errStr
   sys.exit(1)
 
-  
+
 # Handle SIGINT and exit cleanly
 def handleSIGINT(signal, frame):
   dbgLog(LOG_INFO, "SIGINT caught, exiting")
@@ -306,6 +306,7 @@ def handleSIGINT(signal, frame):
 
   
 # Logs message to /tmp/danish.log or tty
+# TODO: Make sure we don't fill up the /tmp filesystem
 def dbgLog(lvl, dbgStr):
   if not LOG_OUTPUT:
     return
@@ -356,7 +357,11 @@ def initRx(iface, filt, timeout):
   try:
     pr.setfilter(filt)
   except pcapy.PcapError:
-    death("Bad capture filter")
+    death("initRx:Bad capture filter " + filt)
+
+  # Non-blocking status appears to vary by platform and libpcap version
+  if not pr.getnonblock():
+    pr.setnonblock(1)
     
   return pr
 
@@ -451,22 +456,41 @@ def printPkt(hdr, pkt):
     dst3 = ':'.join(s[38:54])
     print "L3 dst>" + dst3 + " src>" + src3
     printNibbles(s[54:])
-    
+
   else:
     printNibbles(s[14:])
-    
+
+
+# BPF cannot compile TCP offsets for IPv6 packets
+# So we have these 2 check functions to check packets from kernel before continuing
+def checkV6Hello(hdr, pkt):
+  eth, ip, tcp = parseTCP(pkt)
+  if (len(tcp.data) > 0) and (ord(tcp.data[0:1]) == 22):
+    #dbgLog(LOG_DEBUG, "checkV6Hello to parseClientHello")
+    parseClientHello(hdr, pkt)
+
+
+def checkV6Reply(hdr, pkt):
+  eth, ip, tcp = parseTCP(pkt)
+  if tcp.flags & dpkt.tcp.TH_ACK:
+    if not tcp.flags & dpkt.tcp.TH_RST:
+      if not tcp.flags & dpkt.tcp.TH_SYN:
+        if not tcp.flags & dpkt.tcp.TH_FIN:
+          #dbgLog(LOG_DEBUG, "checkV6Reply to parseServerHello")
+          parseServerHello(hdr, pkt)
+
 
 # Takes pcapy packet and returns 3 layers
 def parseTCP(pkt):
   eth = dpkt.ethernet.Ethernet(pkt)
-    
-  if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.Ethernet.ETH_TYPE_IP6):
+
+  if(eth.type != dpkt.ethernet.ETH_TYPE_IP and eth.type != dpkt.ethernet.ETH_TYPE_IP6):
     death("Unsupported ethertype " + eth.type)
 
   ip = eth.data
   return eth, ip, ip.data
 
-  
+
 # Parses a TLS ClientHello packet
 # TODO:Check if it is a resumption of connection, if so ignore
 # TODO:Figure out TLS 1.3
@@ -481,7 +505,7 @@ def parseClientHello(hdr, pkt):
     return
 
   # It's possible to have more than 1 record in the 1st TLS message,
-  # but I've never actually seen it and our BPF should prevent it from getting here.
+  # but I've never actually seen it and our BPF/parseTCP should prevent it from getting here.
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
       dbgLog(LOG_DEBUG, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type) + " ip.dst:" + pcapToHexStr(ip.dst))
@@ -499,7 +523,7 @@ def parseClientHello(hdr, pkt):
       return
 
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
-      dbgLog(LOG_DEBUG, "TLSHandshake captured not ClientHello" + str(tlsHandshake.type))
+      dbgLog(LOG_DEBUG, "TLSHandshake captured not ClientHello " + str(tlsHandshake.type))
       return
 
     try:
@@ -540,7 +564,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  #dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly")
+  dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly ip.v:" + str(ip.v))
   #dbgLog(LOG_DEBUG, "parseServerHello:" + repr(ip.data))
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
@@ -567,8 +591,9 @@ def parseServerHello(hdr, pkt):
         shCache.insert(shIdx, tcp.seq + len(tcp.data), tcp.data)
 
 
+# TODO: Currently we ignore resumptions, investigate if we want to be fancier
 def parseCert(SNI, ip, tls):
-  dbgLog(LOG_INFO, "Entered parseCert")
+  dbgLog(LOG_DEBUG, "Entered parseCert " + SNI + " ip.v:" + str(ip.v))
   for rec in tls.records:
     if rec.type != 22: # This can happen if we receive data before the cache has been cleared or on malformed packets
       dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake(22), " + SNI)
@@ -620,24 +645,32 @@ ipt('-I danish -j RETURN')
 ipt('-I FORWARD -j danish')
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
-BPF_HELLO = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
-BPF_REPLY = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
+# TODO: Investigate if we really want to be checking TLS version in ClientHellos(first part below)
+BPF_HELLO_4 = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
+BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
   ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1)'
   # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0
   # Must accept TCP fragments
 
+# From http://www.tcpdump.org/manpages/pcap-filter.7.html
+# "Note that tcp, udp and other upper-layer protocol types only apply to IPv4, not IPv6 (this will be fixed in the future)."
+BPF_HELLO_6 = "ip6 and tcp and dst port 443"
+BPF_REPLY_6 = "ip6 and tcp and src port 443"
+
 # Non-blocking status appears to vary by platform and libpcap version
-helloPR = initRx('br-lan', BPF_HELLO, 10)
-if not helloPR.getnonblock():
-  helloPR.setnonblock(1)
-replyPR = initRx('br-lan', BPF_REPLY, 100)
-if not replyPR.getnonblock():
-  replyPR.setnonblock(1)
+helloPR_4 = initRx('br-lan', BPF_HELLO_4, 10)
+replyPR_4 = initRx('br-lan', BPF_REPLY_4, 100)
+helloPR_6 = initRx('br-lan', BPF_HELLO_6, 10)
+replyPR_6 = initRx('br-lan', BPF_REPLY_6, 100)
 
 lastAge = datetime.datetime.utcnow()
 while True:
-  helloPR.dispatch(1, parseClientHello)
-  replyPR.dispatch(1, parseServerHello) # TODO: Make this conditional on client cache entries existing, requires testing
+  helloPR_4.dispatch(1, parseClientHello)
+  helloPR_6.dispatch(1, checkV6Hello)
+
+  # TODO: Make these conditional on client cache entries existing, requires testing
+  replyPR_4.dispatch(1, parseServerHello)
+  replyPR_6.dispatch(1, checkV6Reply)
 
   if lastAge + CACHE_AGE < datetime.datetime.utcnow():
     chCache.age()
