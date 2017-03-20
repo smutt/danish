@@ -71,7 +71,7 @@ class AuthThr(DanishThr):
     try:
       qstr = '_443._tcp.' + self.domain
       d = dns.resolver.Resolver()
-      d.query(qstr, 'TLSA')
+      resp = d.query(qstr, 'TLSA')
     except dns.resolver.NXDOMAIN:
       dbgLog(LOG_DEBUG, "NXDOMAIN for " + qstr)
       return
@@ -89,7 +89,7 @@ class AuthThr(DanishThr):
       return
 
     RRs = []
-    for tlsa in resp:
+    for tlsa in resp.rrset:
       if (tlsa.usage == 1 or tlsa.usage == 3) and tlsa.selector == 0 and \
         (tlsa.mtype > -1 and tlsa.mtype < 3): # Our current DANE limitations
         RRs.append(tlsa)
@@ -107,22 +107,21 @@ class AuthThr(DanishThr):
         elif tlsa.cert == AuthThr.mTypes[tlsa.mtype](cert).digest():
           passed = True
 
-    dbgLog(LOG_INFO, "AuthThr_" + self.domain + ":passed:" + str(passed))
+    dbgLog(LOG_INFO, "AuthThr_" + self.domain + ":TLSA_match:" + str(passed))
     if not passed:
       if 'AclThr_' + self.domain not in threading.enumerate(): # Defensive programming
-        AclThr(self.domain, self.ip).start()
+        AclThr(self.domain, self.ip, resp.ttl).start()
       else:
         dbgLog(LOG_ERROR, "Thread thr_" + self.domain + " already running")
 
 
 # Installs ACLs into the Linux kernel and then manages them
 class AclThr(DanishThr):
-  # Our ACL durations in seconds
-  shortSleep = 60
-  longSleep = 300
+  shortTTL = 60 # Our ACL TTL for the active TCP connection in seconds
 
-  def __init__(self, domain, ip):
+  def __init__(self, domain, ip, ttl):
     self.ip = ip
+    self.longTTL = ttl
     super(self.__class__, self).__init__(domain)
 
   def run(self):
@@ -130,21 +129,24 @@ class AclThr(DanishThr):
     dbgLog(LOG_DEBUG, "chain:" + self.chain)
 
     # ACL definitions
-    self.shortEgress4 = ' --destination ' +  pcapToDecStr(self.ip.src) + '/32' + \
-      ' --source ' + pcapToDecStr(self.ip.dst) + '/32 -p tcp --dport 443' + \
-      ' --sport ' + str(self.ip.data.dport) + ' -j DROP'
-    self.shortIngress4 = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/32' + \
-      ' --source ' + pcapToDecStr(self.ip.src) + '/32 -p tcp --dport ' + \
-      str(self.ip.data.dport) + ' --sport 443 -j DROP'
-    self.longEgress4 = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
+    if self.ip.v == 4:
+      self.shortEgress4 = ' --destination ' +  pcapToDecStr(self.ip.src) + '/32' + \
+        ' --source ' + pcapToDecStr(self.ip.dst) + '/32 -p tcp --dport 443' + \
+        ' --sport ' + str(self.ip.data.dport) + ' -j DROP'
+      self.shortIngress4 = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/32' + \
+        ' --source ' + pcapToDecStr(self.ip.src) + '/32 -p tcp --dport ' + \
+        str(self.ip.data.dport) + ' --sport 443 -j DROP'
+    elif self.ip.v == 6:
+      pass # TODO
+    self.longEgress = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
 
     self.addChain()
     self.addShort()
     self.addLong()
 
     # Set timers to remove ACLs
-    shrt = threading.Timer(AclThr.shortSleep, self.delShort)
-    lng = threading.Timer(AclThr.longSleep, self.cleanUp)
+    shrt = threading.Timer(AclThr.shortTTL, self.delShort)
+    lng = threading.Timer(self.longTTL*2, self.cleanUp)
     shrt.name = name='TS_' + self.domain
     lng.name = name='TL_' + self.domain
     shrt.start()
@@ -175,12 +177,12 @@ class AclThr(DanishThr):
     self.shortActive = False
 
   def addLong(self):
-    dbgLog(LOG_DEBUG, "Adding longEgress4:" + self.longEgress4)
-    ipt('-I ' + self.chain + self.longEgress4)
+    dbgLog(LOG_DEBUG, "Adding longEgress:" + self.longEgress)
+    ipt('-I ' + self.chain + self.longEgress)
 
   def delLong(self):
-    dbgLog(LOG_DEBUG, "Deleting longEgress4:" + self.longEgress4)
-    ipt('-D ' + self.chain + self.longEgress4)
+    dbgLog(LOG_DEBUG, "Deleting longEgress:" + self.longEgress)
+    ipt('-D ' + self.chain + self.longEgress)
 
   def cleanUp(self):
     self.delLong()
@@ -564,7 +566,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly ip.v:" + str(ip.v))
+  #dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly ip.v:" + str(ip.v))
   #dbgLog(LOG_DEBUG, "parseServerHello:" + repr(ip.data))
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
@@ -622,6 +624,8 @@ def parseCert(SNI, ip, tls):
 ###################
 # BEGIN EXECUTION #
 ###################
+
+# TODO Start using a lockfile in /tmp
 
 # Enable debugging
 if LOG_OUTPUT == 'file':
