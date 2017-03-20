@@ -137,12 +137,18 @@ class AclThr(DanishThr):
         ' --source ' + pcapToDecStr(self.ip.src) + '/32 -p tcp --dport ' + \
         str(self.ip.data.dport) + ' --sport 443 -j DROP'
     elif self.ip.v == 6:
-      pass # TODO
+      self.shortEgress4 = ' --destination ' +  pcapToDecStr(self.ip.src) + '/128' + \
+        ' --source ' + pcapToDecStr(self.ip.dst) + '/128 -p tcp --dport 443' + \
+        ' --sport ' + str(self.ip.data.dport) + ' -j DROP'
+      self.shortIngress4 = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/128' + \
+        ' --source ' + pcapToDecStr(self.ip.src) + '/128 -p tcp --dport ' + \
+        str(self.ip.data.dport) + ' --sport 443 -j DROP'
     self.longEgress = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
 
     self.addChain()
     self.addShort()
     self.addLong()
+    dbgLog(LOG_DEBUG, "AclThr_" + self.domain + "Added ACLs IPv" + str(ip.v))
 
     # Set timers to remove ACLs
     shrt = threading.Timer(AclThr.shortTTL, self.delShort)
@@ -566,7 +572,7 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  #dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly ip.v:" + str(ip.v))
+  #dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly IPv:" + str(ip.v))
   #dbgLog(LOG_DEBUG, "parseServerHello:" + repr(ip.data))
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
@@ -595,7 +601,7 @@ def parseServerHello(hdr, pkt):
 
 # TODO: Currently we ignore resumptions, investigate if we want to be fancier
 def parseCert(SNI, ip, tls):
-  dbgLog(LOG_DEBUG, "Entered parseCert " + SNI + " ip.v:" + str(ip.v))
+  dbgLog(LOG_DEBUG, "Entered parseCert " + SNI + " IPv:" + str(ip.v))
   for rec in tls.records:
     if rec.type != 22: # This can happen if we receive data before the cache has been cleared or on malformed packets
       dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake(22), " + SNI)
