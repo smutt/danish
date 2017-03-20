@@ -130,17 +130,17 @@ class AclThr(DanishThr):
 
     # ACL definitions
     if self.ip.v == 4:
-      self.shortEgress4 = ' --destination ' +  pcapToDecStr(self.ip.src) + '/32' + \
+      self.shortEgress = ' --destination ' +  pcapToDecStr(self.ip.src) + '/32' + \
         ' --source ' + pcapToDecStr(self.ip.dst) + '/32 -p tcp --dport 443' + \
         ' --sport ' + str(self.ip.data.dport) + ' -j DROP'
-      self.shortIngress4 = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/32' + \
+      self.shortIngress = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/32' + \
         ' --source ' + pcapToDecStr(self.ip.src) + '/32 -p tcp --dport ' + \
         str(self.ip.data.dport) + ' --sport 443 -j DROP'
     elif self.ip.v == 6:
-      self.shortEgress4 = ' --destination ' +  pcapToDecStr(self.ip.src) + '/128' + \
+      self.shortEgress = ' --destination ' +  pcapToDecStr(self.ip.src) + '/128' + \
         ' --source ' + pcapToDecStr(self.ip.dst) + '/128 -p tcp --dport 443' + \
         ' --sport ' + str(self.ip.data.dport) + ' -j DROP'
-      self.shortIngress4 = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/128' + \
+      self.shortIngress = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/128' + \
         ' --source ' + pcapToDecStr(self.ip.src) + '/128 -p tcp --dport ' + \
         str(self.ip.data.dport) + ' --sport 443 -j DROP'
     self.longEgress = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
@@ -169,17 +169,17 @@ class AclThr(DanishThr):
     ipt('--delete-chain ' + self.chain)
 
   def addShort(self):
-    dbgLog(LOG_DEBUG, "Adding shortEgress4:" + self.shortEgress4)
-    dbgLog(LOG_DEBUG, "Adding shortIngress4:" + self.shortIngress4)
-    ipt('-I ' + self.chain + self.shortEgress4)
-    ipt('-I ' + self.chain + self.shortIngress4)
+    dbgLog(LOG_DEBUG, "Adding shortEgress:" + self.shortEgress)
+    dbgLog(LOG_DEBUG, "Adding shortIngress:" + self.shortIngress)
+    ipt('-I ' + self.chain + self.shortEgress)
+    ipt('-I ' + self.chain + self.shortIngress)
     self.shortActive = True
 
   def delShort(self):
-    dbgLog(LOG_DEBUG, "Deleting shortEgress4:" + self.shortEgress4)
-    dbgLog(LOG_DEBUG, "Deleting shortIngress4:" + self.shortIngress4)
-    ipt('-D ' + self.chain + self.shortEgress4)
-    ipt('-D ' + self.chain + self.shortIngress4)
+    dbgLog(LOG_DEBUG, "Deleting shortEgress:" + self.shortEgress)
+    dbgLog(LOG_DEBUG, "Deleting shortIngress:" + self.shortIngress)
+    ipt('-D ' + self.chain + self.shortEgress)
+    ipt('-D ' + self.chain + self.shortIngress)
     self.shortActive = False
 
   def addLong(self):
