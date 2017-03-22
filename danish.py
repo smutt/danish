@@ -667,7 +667,6 @@ BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[
 BPF_HELLO_6 = "ip6 and tcp and dst port 443"
 BPF_REPLY_6 = "ip6 and tcp and src port 443"
 
-# Non-blocking status appears to vary by platform and libpcap version
 helloPR_4 = initRx('br-lan', BPF_HELLO_4, 10)
 replyPR_4 = initRx('br-lan', BPF_REPLY_4, 100)
 helloPR_6 = initRx('br-lan', BPF_HELLO_6, 10)
