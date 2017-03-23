@@ -148,7 +148,7 @@ class AclThr(DanishThr):
     self.addChain()
     self.addShort()
     self.addLong()
-    dbgLog(LOG_DEBUG, "AclThr_" + self.domain + "Added ACLs IPv" + str(ip.v))
+    dbgLog(LOG_DEBUG, "AclThr_" + self.domain + "Added ACLs IPv" + str(self.ip.v))
 
     # Set timers to remove ACLs
     shrt = threading.Timer(AclThr.shortTTL, self.delShort)
