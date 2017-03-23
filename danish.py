@@ -31,7 +31,13 @@ LOG_FNAME = '/tmp/danish.log'
 # Interval to trigger cache age check
 CACHE_AGE = datetime.timedelta(seconds=600)
 
+<<<<<<< HEAD
 # TODO: Make iptables chain names constants here
+=======
+# Iptables constants
+IPT_BINARY = "/usr/sbin/iptables"
+IPT_CHAIN = "danish"
+>>>>>>> refs/remotes/origin/master
 
 ###########
 # Classes #
@@ -117,11 +123,19 @@ class AuthThr(DanishThr):
 
 # Installs ACLs into the Linux kernel and then manages them
 class AclThr(DanishThr):
+<<<<<<< HEAD
   shortTTL = 60 # Our ACL TTL for the active TCP connection in seconds
 
   def __init__(self, domain, ip, ttl):
     self.ip = ip
     self.longTTL = ttl
+=======
+  shortTTL = 600 # Our ACL TTL for the active TCP connection in seconds
+
+  def __init__(self, domain, ip, ttl):
+    self.ip = ip
+    self.longTTL = ttl * 2 # The SNI will be blocked for this many seconds
+>>>>>>> refs/remotes/origin/master
     super(self.__class__, self).__init__(domain)
 
   def run(self):
@@ -152,7 +166,11 @@ class AclThr(DanishThr):
 
     # Set timers to remove ACLs
     shrt = threading.Timer(AclThr.shortTTL, self.delShort)
+<<<<<<< HEAD
     lng = threading.Timer(self.longTTL*2, self.cleanUp)
+=======
+    lng = threading.Timer(self.longTTL, self.cleanUp)
+>>>>>>> refs/remotes/origin/master
     shrt.name = name='TS_' + self.domain
     lng.name = name='TL_' + self.domain
     shrt.start()
@@ -161,10 +179,10 @@ class AclThr(DanishThr):
   def addChain(self):
     ipt('--new ' + self.chain)
     ipt('-I ' + self.chain + ' -j RETURN')
-    ipt('-I danish -j ' + self.chain)
+    ipt('-I ' + IPT_CHAIN + ' -j ' + self.chain)
 
   def delChain(self):
-    ipt('-D danish -j ' + self.chain)
+    ipt('-D ' + IPT_CHAIN + ' -j ' + self.chain)
     ipt('-F ' + self.chain)
     ipt('--delete-chain ' + self.chain)
 
@@ -195,7 +213,7 @@ class AclThr(DanishThr):
     self.delChain()
 
 
-# Superclass for ClientHello and ServerHello classes
+# Superclass for ClientHelloCache and ServerHelloCache classes
 class DanishCache:
   def __init__(self, name):
     self._name = name
@@ -273,13 +291,13 @@ class ServerHelloCache(DanishCache):
 
 # Calls iptables with passed string as args
 def ipt(s):
-  return subp.check_output(["/usr/sbin/iptables"] + s.split())
+  return subp.check_output([IPT_BINARY] + s.split())
 
 
 # Generates an iptables chain name based on domain
 # maxchars for iptables chain names is 29
 def genChainName(domain):
-  return 'danish_' + hashlib.sha1(domain).hexdigest()[20:]
+  return IPT_CHAIN + '_' + hashlib.sha1(domain).hexdigest()[20:]
 
 
 # Print string then die with error, dirty
@@ -301,15 +319,15 @@ def handleSIGINT(signal, frame):
       thr.cancel()
 
   # Clean up iptables
-  ipt('-D FORWARD -j danish')
-  subChains = re.findall(re.compile('danish_[a-z,0-9]{20}'), ipt('-L danish'))
-  ipt('-F danish')
+  ipt('-D FORWARD -j ' + IPT_CHAIN)
+  subChains = re.findall(re.compile(IPT_CHAIN + '_[a-z,0-9]{20}'), ipt('-L ' + IPT_CHAIN))
+  ipt('-F ' + IPT_CHAIN)
 
   for chain in subChains:
     ipt('-F ' + chain)
     ipt('-X ' + chain)
 
-  ipt('-X danish')
+  ipt('-X ' + IPT_CHAIN)
   sys.exit(0)
 
   
@@ -423,6 +441,7 @@ def printNibbles(chars):
 
     
 # Writes a packet to /tmp/danish.pcap
+# Debugging only
 def dumpPkt(pkt):
   fh = open('/tmp/danish.pcap', 'wb')
   df = dpkt.pcap.Writer(fh)
@@ -610,7 +629,7 @@ def parseCert(SNI, ip, tls):
 
     # We only support TLS 1.2
     if rec.version != 771:
-      dbgLog(LOG_INFO, "TLS version in ServerHello Record not 1.2, " + SNI)
+      dbgLog(LOG_INFO, "TLS version in ServerHello Record not 1.2, " + SNI + ", " + str(rec.version))
       return
     
     try:
@@ -650,9 +669,9 @@ chCache = ClientHelloCache('ClientCache')
 shCache = ServerHelloCache('ServerCache')
 
 # Init our master iptables chain
-ipt('--new danish')
-ipt('-I danish -j RETURN')
-ipt('-I FORWARD -j danish')
+ipt('--new ' + IPT_CHAIN)
+ipt('-I ' + IPT_CHAIN + ' -j RETURN')
+ipt('-I FORWARD -j ' + IPT_CHAIN)
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 # TODO: Investigate if we really want to be checking TLS version in ClientHellos(first part below)
@@ -667,7 +686,10 @@ BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[
 BPF_HELLO_6 = "ip6 and tcp and dst port 443"
 BPF_REPLY_6 = "ip6 and tcp and src port 443"
 
+<<<<<<< HEAD
 # Non-blocking status appears to vary by platform and libpcap version
+=======
+>>>>>>> refs/remotes/origin/master
 helloPR_4 = initRx('br-lan', BPF_HELLO_4, 10)
 replyPR_4 = initRx('br-lan', BPF_REPLY_4, 100)
 helloPR_6 = initRx('br-lan', BPF_HELLO_6, 10)
