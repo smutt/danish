@@ -31,13 +31,9 @@ LOG_FNAME = '/tmp/danish.log'
 # Interval to trigger cache age check
 CACHE_AGE = datetime.timedelta(seconds=600)
 
-<<<<<<< HEAD
-# TODO: Make iptables chain names constants here
-=======
 # Iptables constants
 IPT_BINARY = "/usr/sbin/iptables"
 IPT_CHAIN = "danish"
->>>>>>> refs/remotes/origin/master
 
 ###########
 # Classes #
@@ -123,19 +119,11 @@ class AuthThr(DanishThr):
 
 # Installs ACLs into the Linux kernel and then manages them
 class AclThr(DanishThr):
-<<<<<<< HEAD
-  shortTTL = 60 # Our ACL TTL for the active TCP connection in seconds
-
-  def __init__(self, domain, ip, ttl):
-    self.ip = ip
-    self.longTTL = ttl
-=======
   shortTTL = 600 # Our ACL TTL for the active TCP connection in seconds
 
   def __init__(self, domain, ip, ttl):
     self.ip = ip
     self.longTTL = ttl * 2 # The SNI will be blocked for this many seconds
->>>>>>> refs/remotes/origin/master
     super(self.__class__, self).__init__(domain)
 
   def run(self):
@@ -166,11 +154,7 @@ class AclThr(DanishThr):
 
     # Set timers to remove ACLs
     shrt = threading.Timer(AclThr.shortTTL, self.delShort)
-<<<<<<< HEAD
-    lng = threading.Timer(self.longTTL*2, self.cleanUp)
-=======
     lng = threading.Timer(self.longTTL, self.cleanUp)
->>>>>>> refs/remotes/origin/master
     shrt.name = name='TS_' + self.domain
     lng.name = name='TL_' + self.domain
     shrt.start()
@@ -686,10 +670,6 @@ BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[
 BPF_HELLO_6 = "ip6 and tcp and dst port 443"
 BPF_REPLY_6 = "ip6 and tcp and src port 443"
 
-<<<<<<< HEAD
-# Non-blocking status appears to vary by platform and libpcap version
-=======
->>>>>>> refs/remotes/origin/master
 helloPR_4 = initRx('br-lan', BPF_HELLO_4, 10)
 replyPR_4 = initRx('br-lan', BPF_REPLY_4, 100)
 helloPR_6 = initRx('br-lan', BPF_HELLO_6, 10)
