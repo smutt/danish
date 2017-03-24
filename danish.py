@@ -33,7 +33,10 @@ CACHE_AGE = datetime.timedelta(seconds=600)
 
 # Iptables constants
 IPT_BINARY = "/usr/sbin/iptables"
+IPT6_BINARY = "/usr/sbin/ip6tables"
+IP6_SUPPORT = os.access(IPT6_BINARY, os.X_OK) # TODO: Could refine this more
 IPT_CHAIN = "danish"
+
 
 ###########
 # Classes #
@@ -100,6 +103,7 @@ class AuthThr(DanishThr):
       dbgLog(LOG_INFO, "No valid RRs found for " + qstr)
       return
 
+    dbgLog(LOG_INFO, "AuthThr_" + self.domain + ":TLSA RR Found")
     passed = False
     for tlsa in RRs:
       for cert in self.certs:
@@ -127,7 +131,7 @@ class AclThr(DanishThr):
     super(self.__class__, self).__init__(domain)
 
   def run(self):
-    self.chain = genChainName(self.domain) 
+    self.chain = genChainName(self.domain)
     dbgLog(LOG_DEBUG, "chain:" + self.chain)
 
     # ACL definitions
@@ -165,32 +169,58 @@ class AclThr(DanishThr):
     ipt('-I ' + self.chain + ' -j RETURN')
     ipt('-I ' + IPT_CHAIN + ' -j ' + self.chain)
 
+    if IP6_SUPPORT:
+      ipt6('--new ' + self.chain)
+      ipt6('-I ' + self.chain + ' -j RETURN')
+      ipt6('-I ' + IPT_CHAIN + ' -j ' + self.chain)
+
+
   def delChain(self):
     ipt('-D ' + IPT_CHAIN + ' -j ' + self.chain)
     ipt('-F ' + self.chain)
     ipt('--delete-chain ' + self.chain)
 
+    if IP6_SUPPORT:
+      ipt6('-D ' + IPT_CHAIN + ' -j ' + self.chain)
+      ipt6('-F ' + self.chain)
+      ipt6('--delete-chain ' + self.chain)
+
+
   def addShort(self):
     dbgLog(LOG_DEBUG, "Adding shortEgress:" + self.shortEgress)
     dbgLog(LOG_DEBUG, "Adding shortIngress:" + self.shortIngress)
-    ipt('-I ' + self.chain + self.shortEgress)
-    ipt('-I ' + self.chain + self.shortIngress)
-    self.shortActive = True
+    if self.ip.v == 4:
+      ipt('-I ' + self.chain + self.shortEgress)
+      ipt('-I ' + self.chain + self.shortIngress)
+    elif self.ip.v == 6:
+      ipt6('-I ' + self.chain + self.shortEgress)
+      ipt6('-I ' + self.chain + self.shortIngress)
+
 
   def delShort(self):
     dbgLog(LOG_DEBUG, "Deleting shortEgress:" + self.shortEgress)
     dbgLog(LOG_DEBUG, "Deleting shortIngress:" + self.shortIngress)
-    ipt('-D ' + self.chain + self.shortEgress)
-    ipt('-D ' + self.chain + self.shortIngress)
-    self.shortActive = False
+    if self.ip.v == 4:
+      ipt('-D ' + self.chain + self.shortEgress)
+      ipt('-D ' + self.chain + self.shortIngress)
+    elif self.ip.v == 6:
+      ipt6('-D ' + self.chain + self.shortEgress)
+      ipt6('-D ' + self.chain + self.shortIngress)
+
 
   def addLong(self):
     dbgLog(LOG_DEBUG, "Adding longEgress:" + self.longEgress)
     ipt('-I ' + self.chain + self.longEgress)
+    if IP6_SUPPORT:
+      ipt6('-I ' + self.chain + self.longEgress)
+
 
   def delLong(self):
     dbgLog(LOG_DEBUG, "Deleting longEgress:" + self.longEgress)
     ipt('-D ' + self.chain + self.longEgress)
+    if IP6_SUPPORT:
+      ipt6('-D ' + self.chain + self.longEgress)
+
 
   def cleanUp(self):
     self.delLong()
@@ -278,6 +308,11 @@ def ipt(s):
   return subp.check_output([IPT_BINARY] + s.split())
 
 
+# Calls ip6tables with passed string as args
+def ipt6(s):
+  return subp.check_output([IPT6_BINARY] + s.split())
+
+
 # Generates an iptables chain name based on domain
 # maxchars for iptables chain names is 29
 def genChainName(domain):
@@ -310,8 +345,17 @@ def handleSIGINT(signal, frame):
   for chain in subChains:
     ipt('-F ' + chain)
     ipt('-X ' + chain)
-
   ipt('-X ' + IPT_CHAIN)
+
+  if IP6_SUPPORT:
+    ipt6('-D FORWARD -j ' + IPT_CHAIN)
+    ipt6('-F ' + IPT_CHAIN)
+
+    for chain in subChains:
+      ipt6('-F ' + chain)
+      ipt6('-X ' + chain)
+    ipt6('-X ' + IPT_CHAIN)
+
   sys.exit(0)
 
   
@@ -656,6 +700,11 @@ shCache = ServerHelloCache('ServerCache')
 ipt('--new ' + IPT_CHAIN)
 ipt('-I ' + IPT_CHAIN + ' -j RETURN')
 ipt('-I FORWARD -j ' + IPT_CHAIN)
+if IP6_SUPPORT:
+  ipt6('--new ' + IPT_CHAIN)
+  ipt6('-I ' + IPT_CHAIN + ' -j RETURN')
+  ipt6('-I FORWARD -j ' + IPT_CHAIN)
+
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 # TODO: Investigate if we really want to be checking TLS version in ClientHellos(first part below)
@@ -667,22 +716,26 @@ BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[
 
 # From http://www.tcpdump.org/manpages/pcap-filter.7.html
 # "Note that tcp, udp and other upper-layer protocol types only apply to IPv4, not IPv6 (this will be fixed in the future)."
-BPF_HELLO_6 = "ip6 and tcp and dst port 443"
-BPF_REPLY_6 = "ip6 and tcp and src port 443"
+if IP6_SUPPORT:
+  BPF_HELLO_6 = "ip6 and tcp and dst port 443"
+  BPF_REPLY_6 = "ip6 and tcp and src port 443"
 
 helloPR_4 = initRx('br-lan', BPF_HELLO_4, 10)
 replyPR_4 = initRx('br-lan', BPF_REPLY_4, 100)
-helloPR_6 = initRx('br-lan', BPF_HELLO_6, 10)
-replyPR_6 = initRx('br-lan', BPF_REPLY_6, 100)
+if IP6_SUPPORT:
+  helloPR_6 = initRx('br-lan', BPF_HELLO_6, 10)
+  replyPR_6 = initRx('br-lan', BPF_REPLY_6, 100)
 
 lastAge = datetime.datetime.utcnow()
 while True:
   helloPR_4.dispatch(1, parseClientHello)
-  helloPR_6.dispatch(1, checkV6Hello)
+  if IP6_SUPPORT:
+    helloPR_6.dispatch(1, checkV6Hello)
 
   # TODO: Make these conditional on client cache entries existing, requires testing
   replyPR_4.dispatch(1, parseServerHello)
-  replyPR_6.dispatch(1, checkV6Reply)
+  if IP6_SUPPORT:
+    replyPR_6.dispatch(1, checkV6Reply)
 
   if lastAge + CACHE_AGE < datetime.datetime.utcnow():
     chCache.age()
