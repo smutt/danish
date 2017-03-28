@@ -608,7 +608,6 @@ def parseClientHello(hdr, pkt):
     dbgLog(LOG_INFO, "Client SNI:" + domain)
 
     # Don't do anything if we're already investigating this domain
-    # TODO: Don't do anything if we're already blocking this domain
     for thr in threading.enumerate():
       if isinstance(thr, DanishThr) or isinstance(thr, threading._Timer):
         if thr.name.split("_")[1] == domain:
