@@ -100,7 +100,7 @@ class AuthThr(DanishThr):
         RRs.append(tlsa)
 
     if len(RRs) == 0:
-      dbgLog(LOG_INFO, "No valid RRs found for " + qstr)
+      dbgLog(LOG_INFO, "No valid and supported RRs found for " + qstr)
       return
 
     dbgLog(LOG_INFO, "AuthThr_" + self.domain + ":TLSA RR Found")
