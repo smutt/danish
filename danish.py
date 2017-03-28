@@ -610,7 +610,7 @@ def parseClientHello(hdr, pkt):
     # Don't do anything if we're already investigating this domain
     # TODO: Don't do anything if we're already blocking this domain
     for thr in threading.enumerate():
-      if isinstance(thr, DanishThr):
+      if isinstance(thr, DanishThr) or isinstance(thr, threading._Timer):
         if thr.name.split("_")[1] == domain:
           dbgLog(LOG_DEBUG, thr.name + " already active")
           return
