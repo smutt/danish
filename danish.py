@@ -576,9 +576,8 @@ def parseClientHello(hdr, pkt):
       dbgLog(LOG_DEBUG, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type) + " ip.dst:" + pcapToHexStr(ip.dst))
       continue
 
-    # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
     if rec.version < 768:
-      dbgLog(LOG_DEBUG, "TLS record version " + str(rec.version) + " in ClientHello < SSL 3.0")
+      dbgLog(LOG_DEBUG, "TLS Record version " + str(rec.version) + " in ClientHello < SSL 3.0")
       return
 
     try:
@@ -658,11 +657,11 @@ def parseServerHello(hdr, pkt):
 
 # TODO: Currently we ignore resumptions, investigate if we want to be fancier
 def parseCert(SNI, ip, tls):
-  dbgLog(LOG_DEBUG, "Entered parseCert " + SNI + " IPv:" + str(ip.v))
+  dbgLog(LOG_DEBUG, "Entered parseCert " + SNI + " IPv" + str(ip.v))
 
-  # We only support TLS 1.2 for now, but let's not barf on TLS 1.0 in ServerHellos
-  if tls.version < 769:
-    dbgLog(LOG_DEBUG, "TLS version " + str(tls.version) + " in ServerHello < TLS 1.0")
+  # We only support TLS 1.0 - 1.2 for now
+  if tls.version < 769 or tls.version > 771:
+    dbgLog(LOG_DEBUG, "TLS version in ServerHello not supported, " + SNI + ", " + str(tls.version))
     return
 
   for rec in tls.records:
@@ -671,9 +670,9 @@ def parseCert(SNI, ip, tls):
       #dbgLog(LOG_DEBUG, "ip.data:" + repr(ip.data))
       return
 
-    # We only support TLS 1.2
-    if rec.version != 771:
-      dbgLog(LOG_INFO, "TLS version in ServerHello Record not 1.2, " + SNI + ", " + str(rec.version))
+    # We only support TLS 1.0 - 1.2 in TLS Records
+    if rec.version < 769 or rec.version > 771:
+      dbgLog(LOG_INFO, "TLS version in ServerHello Record not supported, " + SNI + ", " + str(rec.version))
       return
     
     try:
