@@ -548,7 +548,7 @@ def parseTCP(pkt):
 
 # Parses a TLS ClientHello packet
 # TODO:Check if it is a resumption of connection, if so ignore
-# TODO:Figure out TLS 1.3
+# TODO:Figure out TLS 1.0, 1.1, and 1.3
 def parseClientHello(hdr, pkt):
   dbgLog(LOG_DEBUG, "Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
@@ -559,7 +559,17 @@ def parseClientHello(hdr, pkt):
     dbgLog(LOG_DEBUG, "Bad TLS ClientHello Record")
     return
 
-  # It's possible to have more than 1 record in the 1st TLS message,
+  # BPF should prevent this from happening
+  if tls.type != 22:
+    dbgLog(LOG_DEBUG, "TLS ClientHello not TLS ClientHello, instead type=" + str(tls.type))
+    return
+
+  # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
+  if tls.version < 768:
+    dbgLog(LOG_DEBUG, "TLS version " + str(tls.version) + " in ClientHello < SSL 3.0")
+    return
+
+  # It's possible to have more than 1 record in the TLS ClientHello message,
   # but I've never actually seen it and our BPF/parseTCP should prevent it from getting here.
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
@@ -568,7 +578,7 @@ def parseClientHello(hdr, pkt):
 
     # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
     if rec.version < 768:
-      dbgLog(LOG_DEBUG, "TLS version " + str(rec.version) + " in ClientHello < SSL 3.0")
+      dbgLog(LOG_DEBUG, "TLS record version " + str(rec.version) + " in ClientHello < SSL 3.0")
       return
 
     try:
@@ -598,6 +608,7 @@ def parseClientHello(hdr, pkt):
     dbgLog(LOG_INFO, "Client SNI:" + domain)
 
     # Don't do anything if we're already investigating this domain
+    # TODO: Don't do anything if we're already blocking this domain
     for thr in threading.enumerate():
       if isinstance(thr, DanishThr):
         if thr.name.split("_")[1] == domain:
@@ -649,6 +660,12 @@ def parseServerHello(hdr, pkt):
 # TODO: Currently we ignore resumptions, investigate if we want to be fancier
 def parseCert(SNI, ip, tls):
   dbgLog(LOG_DEBUG, "Entered parseCert " + SNI + " IPv:" + str(ip.v))
+
+  # We only support TLS 1.2 for now, but let's not barf on TLS 1.0 in ServerHellos
+  if tls.version < 769:
+    dbgLog(LOG_DEBUG, "TLS version " + str(tls.version) + " in ServerHello < TLS 1.0")
+    return
+
   for rec in tls.records:
     if rec.type != 22: # This can happen if we receive data before the cache has been cleared or on malformed packets
       dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake(22), " + SNI)
