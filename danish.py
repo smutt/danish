@@ -1,14 +1,12 @@
 #!/usr/bin/env python
 
 import sys
-sys.path.insert(0, sys.path[0] + '/dpkt/')
 import os
 import datetime
 import signal
 import pcapy
 import dpkt
 import struct
-#import binascii
 import dns.resolver
 import threading
 import hashlib
