@@ -13,11 +13,11 @@ import hashlib
 import subprocess as subp
 import re
 
-#############
-# CONSTANTS #
-#############
+#####################
+# DEFAULT CONSTANTS #
+#####################
 
-# Logging level constants
+# Logging constants
 LOG_ERROR = 1
 LOG_WARN = 2
 LOG_INFO = 3
@@ -25,15 +25,19 @@ LOG_DEBUG = 4
 LOG_LEVEL = LOG_DEBUG
 LOG_OUTPUT = 'file' # 'tty' | 'file' | False
 LOG_FNAME = '/tmp/danish.log'
+LOG_SIZE = 1024 # Max logfile size in KB, currently not respected
 
-# Interval to trigger cache age check
-CACHE_AGE = datetime.timedelta(seconds=600)
-
-# Iptables constants
+# Network constants
+IFACE = "br-lan"
 IPT_BINARY = "/usr/sbin/iptables"
 IPT6_BINARY = "/usr/sbin/ip6tables"
-IP6_SUPPORT = os.access(IPT6_BINARY, os.X_OK) # TODO: Could refine this more
+IP6_SUPPORT = False
 IPT_CHAIN = "danish"
+
+# Random constants
+UCI_BINARY = '/sbin/uci' # Location of Unified Configuration Interface binary
+LOCK_FNAME = '/tmp/danish.lock' #TODO: Use this 
+CACHE_AGE = datetime.timedelta(seconds=600) # Interval to trigger cache age check
 
 
 ###########
@@ -301,6 +305,14 @@ class ServerHelloCache(DanishCache):
 # GLOBAL FUNCTIONS #
 ####################
 
+# Calls uci to get config vars
+def uci(const):
+  s = UCI_BINARY + ' -q -s get ' + const
+  c = subp.check_output(s.split()).strip()
+  if(c) and len(c) > 0:
+    return c
+
+
 # Calls iptables with passed string as args
 def ipt(s):
   return subp.check_output([IPT_BINARY] + s.split())
@@ -322,6 +334,12 @@ def genChainName(domain):
 def death(errStr=''):
   print "FATAL:" + errStr
   sys.exit(1)
+
+
+# TODO:Write this shit
+# Re-read config and dump cache at SIGHUP
+def handleSIGHUP(signal, frame):
+  pass
 
 
 # Handle SIGINT and exit cleanly
@@ -358,7 +376,7 @@ def handleSIGINT(signal, frame):
 
   
 # Logs message to /tmp/danish.log or tty
-# TODO: Make sure we don't fill up the /tmp filesystem
+# TODO: Make sure we don't fill up the /tmp filesystem, respect LOG_SIZE
 def dbgLog(lvl, dbgStr):
   if not LOG_OUTPUT:
     return
@@ -691,6 +709,23 @@ def parseCert(SNI, ip, tls):
 # BEGIN EXECUTION #
 ###################
 
+# Read in UCI config
+try:
+  LOG_LEVEL = uci('danish.@danish[0].loglevel')
+  LOG_SIZE = uci('danish.@danish[0].logsize')
+  LOG_FNAME = uci('danish.@danish[0].logfile')
+  LOCK_FNAME = uci('danish.@danish[0].lockfile')
+  IFACE = uci('danish.@network[0].interface')
+  IPT_BINARY = uci('danish.@network[0].iptables')
+  IPT_CHAIN = uci('danish.@network[0].ipchain')
+except:
+  death("Unable to read in configuration")
+
+try:
+  IPT6_BINARY = uci('danish.@network[0].ip6tables')  
+except:
+  IPT6_BINARY = '/dev/null'
+
 # TODO Start using a lockfile in /tmp
 
 # Enable debugging
@@ -708,6 +743,9 @@ signal.signal(signal.SIGINT, handleSIGINT)
 # Initialize our caches
 chCache = ClientHelloCache('ClientCache')
 shCache = ServerHelloCache('ServerCache')
+
+# Check for IPv6 support
+IP6_SUPPORT = os.access(IPT6_BINARY, os.X_OK)
 
 # Init our master iptables chain
 ipt('--new ' + IPT_CHAIN)
@@ -733,11 +771,11 @@ if IP6_SUPPORT:
   BPF_HELLO_6 = "ip6 and tcp and dst port 443"
   BPF_REPLY_6 = "ip6 and tcp and src port 443"
 
-helloPR_4 = initRx('br-lan', BPF_HELLO_4, 10)
-replyPR_4 = initRx('br-lan', BPF_REPLY_4, 100)
+helloPR_4 = initRx(IFACE, BPF_HELLO_4, 10)
+replyPR_4 = initRx(IFACE, BPF_REPLY_4, 100)
 if IP6_SUPPORT:
-  helloPR_6 = initRx('br-lan', BPF_HELLO_6, 10)
-  replyPR_6 = initRx('br-lan', BPF_REPLY_6, 100)
+  helloPR_6 = initRx(IFACE, BPF_HELLO_6, 10)
+  replyPR_6 = initRx(IFACE, BPF_REPLY_6, 100)
 
 lastAge = datetime.datetime.utcnow()
 while True:
