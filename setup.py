@@ -9,7 +9,7 @@ setup(name='danish',
       author='Andrew McConachie',
       author_email='andrew@depht.com',
       url='https://github.com/smutt/danish',
-      platform='LEDE','OpenWRT','Linux',
+      platform=['LEDE','OpenWRT','Linux'],
       license='GPL-3',
       packages=find_packages()
       )
