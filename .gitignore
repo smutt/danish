@@ -6,3 +6,4 @@
 *.pcap
 *.pcapng
 /dpkt
+*.pyc
