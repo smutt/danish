@@ -1,4 +1,6 @@
-from distutils.core import setup
+#!/usr/bin/env python
+
+from setuptools import setup, find_packages
 
 setup(name='danish',
       version='0.1',
@@ -6,5 +8,5 @@ setup(name='danish',
       author='Andrew McConachie',
       author_email='andrew@depht.com',
       url='https://github.com/smutt/danish',
-      packages=['danish'],
-     )
+      packages=find_packages()
+      )
