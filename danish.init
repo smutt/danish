@@ -1,0 +1,33 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2017 OpenWrt.org
+
+START=90
+
+USE_PROCD=1
+PROG=/usr/sbin/danish
+
+validate_danish_section() {
+        uci_validate_section danish network "${1}" \
+			 'interface:string:br-lan' \
+			 'iptables:file:/usr/sbin/iptables' \
+			 'ip6tables:file' \
+			 'ipchain:string:danish'
+
+        uci_validate_section danish danish "${1}" \
+			 'loglevel:string:error' \
+			 'logsize:uinteger:1024' \
+			 'logfile:file:/tmp/danish.log' \
+			 'lockfile:file:/tmp/danish.lock'
+}
+
+start_service () {
+	procd_open_instance
+	procd_set_param command "$PROG"
+	procd_close_instance
+}
+
+service_triggers()
+{
+	procd_add_validation validate_danish_section
+}
+
