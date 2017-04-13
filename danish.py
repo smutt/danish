@@ -270,6 +270,10 @@ class DanishCache:
     else:
       return False
 
+  def flush(self):
+    self._entries = {}
+    self._ts = {}
+
   def idx(self, src, dst, port):
     return pcapToDecStr(str(src)) + self._delim + pcapToDecStr(str(dst)) + self._delim + str(port)
 
@@ -329,6 +333,27 @@ def genChainName(domain):
   return IPT_CHAIN + '_' + hashlib.sha1(domain).hexdigest()[20:]
 
 
+# Read in UCI config
+def readConfig():
+  global LOG_LEVEL, LOG_SIZE, LOG_FNAME, IFACE, IPT_BINARY, IPT_CHAIN, IPT6_BINARY
+
+  try:
+    LOG_LEVEL = uci('danish.@danish[0].loglevel')
+    LOG_SIZE = uci('danish.@danish[0].logsize')
+    LOG_FNAME = uci('danish.@danish[0].logfile')
+    LOCK_FNAME = uci('danish.@danish[0].lockfile')
+    IFACE = uci('danish.@network[0].interface')
+    IPT_BINARY = uci('danish.@network[0].iptables')
+    IPT_CHAIN = uci('danish.@network[0].ipchain')
+  except:
+    death("Unable to read in configuration")
+
+  try:
+    IPT6_BINARY = uci('danish.@network[0].ip6tables')
+  except:
+    IPT6_BINARY = '/dev/null'
+
+
 # Print string then die with error, dirty
 # Not thread safe
 def death(errStr=''):
@@ -336,15 +361,17 @@ def death(errStr=''):
   sys.exit(1)
 
 
-# TODO:Write this shit
 # Re-read config and dump cache at SIGHUP
 def handleSIGHUP(signal, frame):
-  pass
+  dbgLog(LOG_INFO, "SIGHUP caught, flushing cache, reloading config")
+  chCache.flush()
+  shCache.flush()
+  readConfig()
 
 
-# Handle SIGINT and exit cleanly
-def handleSIGINT(signal, frame):
-  dbgLog(LOG_INFO, "SIGINT caught, exiting")
+# Handle killing signals and exit cleanly
+def handleKilling(signal, frame):
+  dbgLog(LOG_INFO, "SIG " + str(signal) + " caught, exiting")
   if LOG_OUTPUT == 'file':
     LOG_HANDLE.close()
 
@@ -708,23 +735,7 @@ def parseCert(SNI, ip, tls):
 ###################
 # BEGIN EXECUTION #
 ###################
-
-# Read in UCI config
-try:
-  LOG_LEVEL = uci('danish.@danish[0].loglevel')
-  LOG_SIZE = uci('danish.@danish[0].logsize')
-  LOG_FNAME = uci('danish.@danish[0].logfile')
-  LOCK_FNAME = uci('danish.@danish[0].lockfile')
-  IFACE = uci('danish.@network[0].interface')
-  IPT_BINARY = uci('danish.@network[0].iptables')
-  IPT_CHAIN = uci('danish.@network[0].ipchain')
-except:
-  death("Unable to read in configuration")
-
-try:
-  IPT6_BINARY = uci('danish.@network[0].ip6tables')  
-except:
-  IPT6_BINARY = '/dev/null'
+readConfig()
 
 # TODO Start using a lockfile in /tmp
 
@@ -737,8 +748,13 @@ if LOG_OUTPUT == 'file':
 
 dbgLog(LOG_DEBUG, "Begin Execution")
 
-# Register a signal for Ctrl-C
-signal.signal(signal.SIGINT, handleSIGINT)
+# Register some signals
+signal.signal(signal.SIGINT, handleKilling)
+signal.signal(signal.SIGTERM, handleKilling)
+signal.signal(signal.SIGABRT, handleKilling)
+signal.signal(signal.SIGALRM, handleKilling)
+signal.signal(signal.SIGSEGV, handleKilling)
+signal.signal(signal.SIGHUP, handleSIGHUP)
 
 # Initialize our caches
 chCache = ClientHelloCache('ClientCache')
