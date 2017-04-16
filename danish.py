@@ -36,7 +36,6 @@ IPT_CHAIN = "danish"
 
 # Random constants
 UCI_BINARY = '/sbin/uci' # Location of Unified Configuration Interface binary
-LOCK_FNAME = '/tmp/danish.lock' #TODO: Use this 
 CACHE_AGE = datetime.timedelta(seconds=600) # Interval to trigger cache age check
 
 
@@ -341,7 +340,6 @@ def readConfig():
     logLvl = uci('danish.@danish[0].loglevel')
     LOG_SIZE = uci('danish.@danish[0].logsize')
     LOG_FNAME = uci('danish.@danish[0].logfile')
-    LOCK_FNAME = uci('danish.@danish[0].lockfile')
     IFACE = uci('danish.@network[0].interface')
     IPT_BINARY = uci('danish.@network[0].iptables')
     IPT_CHAIN = uci('danish.@network[0].ipchain')
@@ -407,8 +405,7 @@ def handleKilling(signal, frame):
   sys.exit(0)
 
   
-# Logs message to /tmp/danish.log or tty
-# TODO: Make sure we don't fill up the /tmp filesystem, respect LOG_SIZE
+# Logs message to LOG_FNAME or tty
 def dbgLog(lvl, dbgStr):
   if not LOG_OUTPUT:
     return
@@ -742,8 +739,6 @@ def parseCert(SNI, ip, tls):
 # BEGIN EXECUTION #
 ###################
 readConfig()
-
-# TODO Start using a lockfile in /tmp
 
 # Enable debugging
 if LOG_OUTPUT == 'file':

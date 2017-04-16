@@ -16,8 +16,7 @@ validate_danish_section() {
         uci_validate_section danish danish "${1}" \
 			 'loglevel:string:error' \
 			 'logsize:uinteger:1024' \
-			 'logfile:file:/tmp/danish.log' \
-			 'lockfile:file:/tmp/danish.lock'
+			 'logfile:file:/tmp/danish.log'
 }
 
 start_service () {
