@@ -338,7 +338,7 @@ def readConfig():
   global LOG_LEVEL, LOG_SIZE, LOG_FNAME, IFACE, IPT_BINARY, IPT_CHAIN, IPT6_BINARY
 
   try:
-    LOG_LEVEL = uci('danish.@danish[0].loglevel')
+    logLvl = uci('danish.@danish[0].loglevel')
     LOG_SIZE = uci('danish.@danish[0].logsize')
     LOG_FNAME = uci('danish.@danish[0].logfile')
     LOCK_FNAME = uci('danish.@danish[0].lockfile')
@@ -347,6 +347,11 @@ def readConfig():
     IPT_CHAIN = uci('danish.@network[0].ipchain')
   except:
     death("Unable to read in configuration")
+
+  if 'LOG_' + logLvl.upper() in globals():
+    LOG_LEVEL = eval('LOG_' + logLvl.upper())
+  else:
+    LOG_LEVEL = LOG_WARN
 
   try:
     IPT6_BINARY = uci('danish.@network[0].ip6tables')
