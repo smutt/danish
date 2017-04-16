@@ -25,7 +25,7 @@ LOG_DEBUG = 4
 LOG_LEVEL = LOG_DEBUG
 LOG_OUTPUT = 'file' # 'tty' | 'file' | False
 LOG_FNAME = '/tmp/danish.log'
-LOG_SIZE = 1024 # Max logfile size in KB, currently not respected
+LOG_SIZE = 1024 # Max logfile size in KB
 
 # Network constants
 IFACE = "br-lan"
@@ -436,7 +436,8 @@ def dbgLog(lvl, dbgStr):
 
   if LOG_OUTPUT == 'file':
     try:
-      LOG_HANDLE.write(outStr + '\n')
+      if not (os.stat(LOG_FNAME).st_size / 1024) > LOG_SIZE:
+        LOG_HANDLE.write(outStr + '\n')
     except IOError:
       death("IOError writing to debug file " + dbgFName)
   elif LOG_OUTPUT == 'tty':
