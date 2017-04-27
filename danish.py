@@ -395,7 +395,10 @@ def handleKilling(signal, frame):
   # Kill all timer threads
   for thr in threading.enumerate():
     if isinstance(thr, threading._Timer):
-      thr.cancel()
+      try:
+        thr.cancel()
+      except:
+        pass
 
   # Clean up iptables
   ipt('-D FORWARD -j ' + IPT_CHAIN)
@@ -457,17 +460,17 @@ def dbgLog(lvl, dbgStr):
     
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
-def initPcap(iface, filt, timeout):
+def initPcap(iface, filt):
   if(os.getuid() or os.geteuid()):
     death("Requires root access")
-    
+
   if not iface in pcapy.findalldevs():
     death("Bad interface " + iface)
-    
-  pr = pcapy.open_live(iface, 65536, True, timeout)
+
+  pr = pcapy.open_live(iface, 65536, True, 0)
   if pr.datalink() != pcapy.DLT_EN10MB:
     death("Interface not Ethernet " + iface)
-    
+
   try:
     pr.setfilter(filt)
   except pcapy.PcapError:
@@ -475,7 +478,7 @@ def initPcap(iface, filt, timeout):
 
   # Non-blocking status appears to vary by platform and libpcap version
   pr.setnonblock(0)
-    
+
   return pr
 
 
@@ -802,16 +805,16 @@ BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[
   # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0
   # Must accept TCP fragments
 
-RX_EGR_4 = initRx('RxEgr4', initPcap(IFACE, BPF_HELLO_4, 10), parseClientHello)
-RX_ING_4 = initRx('RxIng4', initPcap(IFACE, BPF_REPLY_4, 100), parseServerHello)
+RX_EGR_4 = initRx('RxEgr4', initPcap(IFACE, BPF_HELLO_4), parseClientHello)
+RX_ING_4 = initRx('RxIng4', initPcap(IFACE, BPF_REPLY_4), parseServerHello)
 
 # From http://www.tcpdump.org/manpages/pcap-filter.7.html
 # "Note that tcp, udp and other upper-layer protocol types only apply to IPv4, not IPv6 (this will be fixed in the future)."
 if IP6_SUPPORT:
   BPF_HELLO_6 = "ip6 and tcp and dst port 443"
   BPF_REPLY_6 = "ip6 and tcp and src port 443"
-  RX_EGR_6 = initRx('RxEgr6', initPcap(IFACE, BPF_HELLO_6, 10), checkV6Hello)
-  RX_ING_6 = initRx('RxIng6', initPcap(IFACE, BPF_REPLY_6, 100), checkV6Reply)
+  RX_EGR_6 = initRx('RxEgr6', initPcap(IFACE, BPF_HELLO_6), checkV6Hello)
+  RX_ING_6 = initRx('RxIng6', initPcap(IFACE, BPF_REPLY_6), checkV6Reply)
 
 while True:
   time.sleep(CACHE_AGE)
