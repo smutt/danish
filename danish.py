@@ -58,7 +58,6 @@ class RxThr(threading.Thread):
     dbgLog(LOG_DEBUG, "Starting RX thread " + name)
     self.pcapObj = pcapObj
     self.callBack = callBack
-    self.zombie = False
     self.thr = threading.Thread.__init__(self, name=type(self).__name__ + '_' + name)
 
   def run(self):
