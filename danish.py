@@ -12,6 +12,7 @@ import threading
 import hashlib
 import subprocess as subp
 import re
+import time
 
 #####################
 # DEFAULT CONSTANTS #
@@ -36,19 +37,33 @@ IPT_CHAIN = "danish"
 
 # Random constants
 UCI_BINARY = '/sbin/uci' # Location of Unified Configuration Interface binary
-CACHE_AGE = datetime.timedelta(seconds=600) # Interval to trigger cache age check
+CACHE_AGE = 600 # Interval to trigger cache age check in seconds
 
 
 ###########
 # Classes #
 ###########
 
-# Superclass for all of our threads
+# Superclass for all of our DNS threads
 class DanishThr(threading.Thread):
   def __init__(self, domain):
     self.domain = domain
     dbgLog(LOG_DEBUG, "Starting thread " + type(self).__name__ + '_' + self.domain)
     threading.Thread.__init__(self, name=type(self).__name__ + '_' + self.domain)
+
+
+# Capture traffic via pcap object until killed
+class RxThr(threading.Thread):
+  def __init__(self, name, pcapObj, callBack):
+    dbgLog(LOG_DEBUG, "Starting RX thread " + name)
+    self.pcapObj = pcapObj
+    self.callBack = callBack
+    self.zombie = False
+    self.thr = threading.Thread.__init__(self, name=type(self).__name__ + '_' + name)
+
+  def run(self):
+    while True:
+      self.pcapObj.dispatch(1, self.callBack)
 
 
 # Perform a query for a TLSA RR then die
@@ -443,7 +458,7 @@ def dbgLog(lvl, dbgStr):
     
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
-def initRx(iface, filt, timeout):
+def initPcap(iface, filt, timeout):
   if(os.getuid() or os.geteuid()):
     death("Requires root access")
     
@@ -457,13 +472,20 @@ def initRx(iface, filt, timeout):
   try:
     pr.setfilter(filt)
   except pcapy.PcapError:
-    death("initRx:Bad capture filter " + filt)
+    death("initPcap:Bad capture filter " + filt)
 
   # Non-blocking status appears to vary by platform and libpcap version
-  if not pr.getnonblock():
-    pr.setnonblock(1)
+  pr.setnonblock(0)
     
   return pr
+
+
+# Wrapper for RxThr
+def initRx(name, pcapObj, callBack):
+  rv = RxThr(name, pcapObj, callBack)
+  rv.daemon = True
+  rv.start()
+  return rv
 
 
 # Change dpkt character bytes to padded hex string without leading 0x
@@ -724,7 +746,7 @@ def parseCert(SNI, ip, tls):
     try:
       tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     except dpkt.ssl.SSL3Exception:
-      dbgLog(LOG_DEBUG, "TLS Handshake type not Certificate(11)" + SNI)
+      dbgLog(LOG_DEBUG, "TLS Handshake type not Certificate(11), " + SNI)
       return
 
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
@@ -764,7 +786,7 @@ shCache = ServerHelloCache('ServerCache')
 # Check for IPv6 support
 IP6_SUPPORT = os.access(IPT6_BINARY, os.X_OK)
 
-# Init our master iptables chain
+# Init our master iptables chain(s)
 ipt('--new ' + IPT_CHAIN)
 ipt('-I ' + IPT_CHAIN + ' -j RETURN')
 ipt('-I FORWARD -j ' + IPT_CHAIN)
@@ -772,7 +794,6 @@ if IP6_SUPPORT:
   ipt6('--new ' + IPT_CHAIN)
   ipt6('-I ' + IPT_CHAIN + ' -j RETURN')
   ipt6('-I FORWARD -j ' + IPT_CHAIN)
-
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
 # TODO: Investigate if we really want to be checking TLS version in ClientHellos(first part below)
@@ -782,30 +803,18 @@ BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[
   # ACK == 1 && RST == 0 && SYN == 0 && FIN == 0
   # Must accept TCP fragments
 
+RX_EGR_4 = initRx('RxEgr4', initPcap(IFACE, BPF_HELLO_4, 10), parseClientHello)
+RX_ING_4 = initRx('RxIng4', initPcap(IFACE, BPF_REPLY_4, 100), parseServerHello)
+
 # From http://www.tcpdump.org/manpages/pcap-filter.7.html
 # "Note that tcp, udp and other upper-layer protocol types only apply to IPv4, not IPv6 (this will be fixed in the future)."
 if IP6_SUPPORT:
   BPF_HELLO_6 = "ip6 and tcp and dst port 443"
   BPF_REPLY_6 = "ip6 and tcp and src port 443"
+  RX_EGR_6 = initRx('RxEgr6', initPcap(IFACE, BPF_HELLO_6, 10), checkV6Hello)
+  RX_ING_6 = initRx('RxIng6', initPcap(IFACE, BPF_REPLY_6, 100), checkV6Reply)
 
-helloPR_4 = initRx(IFACE, BPF_HELLO_4, 10)
-replyPR_4 = initRx(IFACE, BPF_REPLY_4, 100)
-if IP6_SUPPORT:
-  helloPR_6 = initRx(IFACE, BPF_HELLO_6, 10)
-  replyPR_6 = initRx(IFACE, BPF_REPLY_6, 100)
-
-lastAge = datetime.datetime.utcnow()
 while True:
-  helloPR_4.dispatch(1, parseClientHello)
-  if IP6_SUPPORT:
-    helloPR_6.dispatch(1, checkV6Hello)
-
-  # TODO: Make these conditional on client cache entries existing, requires testing
-  replyPR_4.dispatch(1, parseServerHello)
-  if IP6_SUPPORT:
-    replyPR_6.dispatch(1, checkV6Reply)
-
-  if lastAge + CACHE_AGE < datetime.datetime.utcnow():
-    chCache.age()
-    shCache.age()
-    lastAge = datetime.datetime.utcnow()
+  time.sleep(CACHE_AGE)
+  chCache.age()
+  shCache.age()
