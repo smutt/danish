@@ -142,7 +142,7 @@ class AclThr(DanishThr):
 
   def __init__(self, domain, ip, ttl):
     self.ip = ip
-    self.longTTL = ttl * 2 # The SNI will be blocked for this many seconds
+    self.longTTL = ttl # The SNI will be blocked for this many seconds
     super(self.__class__, self).__init__(domain)
 
   def run(self):
