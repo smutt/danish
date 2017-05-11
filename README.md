@@ -3,10 +3,10 @@ Danish is an experiment in middle-box DANE (RFC 6698) for HTTPS.
 
 Danish is a daemon that listens for HTTPS TLS handshake traffic and captures the TLS/SNI and certificates. It then performs DNS lookups for DNS TLSA records to determine if the responding server is sending the correct X.509 certificate in its TLS ServerHello message.
 
-If the certificates and DNS TLSA records do NOT match, iptables/ip6tables ACLs are installed to block user traffic to the offending website. ACLs are installed to both blackhole the immediate TCP traffic and prevent any further attempts at users connecting to the offending website. Users are currently prevented from connecting to the offending website for 2X the TTL of the relevant DNS TLSA RR.
+If the certificates and DNS TLSA records do NOT match, iptables/ip6tables ACLs are installed to block user traffic to the offending website. ACLs are installed to both blackhole the immediate TCP traffic and prevent any further attempts at users connecting to the offending website. Users are then prevented from connecting to the offending website for the TTL of the relevant DNS TLSA RR.
 
-## Support
-Danish 0.1 supports TLS 1.0 - 1.2, IPv4/IPv6, and some TLSA RRs. Danish only supports TLSA certificate usage 1 and 3, and TLSA selector 0. TLSA records that Danish does not support are ignored.
+## Supported Protocols and Versions
+Danish currently supports TLS 1.0 - 1.2, IPv4/IPv6, and some TLSA RRs. Danish only supports TLSA certificate usage 1 and 3, and TLSA selector 0. TLSA records that Danish does not support are ignored.
 
 Full support for RFC 6698 is dependent on the OpenWRT/LEDE OpenSSL package also supporting DANE.
 
@@ -35,7 +35,7 @@ All shell commands below are to be executed from your OpenWRT or LEDE base direc
   - `mkdir feeds/packages/lang/python-dpkt/`
   - Copy Makefile from [python-dpkt PR](https://github.com/openwrt/packages/pull/4256) to `feeds/packages/lang/python-dpkt/Makefile`
   - `mkdir feeds/packages/net/danish`
-  - Copy Makefile from [Danish Github repository](https://github.com/smutt/danish) to `feeds/packages/net/danish/Makefile`
+  - Copy Makefile from [danish github repository](https://github.com/smutt/danish) to `feeds/packages/net/danish/Makefile`
   - `./scripts/feeds update -a`
   - `./scripts/feeds install -a`
 
@@ -48,3 +48,24 @@ All shell commands below are to be executed from your OpenWRT or LEDE base direc
 :grey_exclamation: You may need to de-select package dnsmasq as it may conflict with dnsmasq-full. dnsmasq-full includes DNSSEC support and Danish requires DNSSEC.
 
 ## Configuration
+
+Danish uses the Universal Configuration Interface (UCI). The Danish configuration file is stored in `/etc/config/danish`.
+
+Configuration directives are defined below.
+
+| Section | Element | Default | Explanation |
+--- | --- | --- | --- | 
+| network | interface | br-lan | The 'inside' interface of the middlebox | 
+| network | iptables | /usr/sbin/iptables | Location of iptables binary |
+| network | ip6tables | /usr/sbin/ip6tables | Location of ip6tables binary |
+| network | ipchain | danish | Name prefix Danish uses for iptables rules |
+| danish | loglevel | error | log level | 
+| danish | logsize | 1024 | Max size of logfile in KB | 
+| danish | logfile | /tmp/danish.log | Log file Location | 
+
+Possible values for loglevel listed by increasing verbosity are `error, warn, info, debug`.
+
+## TODO
+- Add support for TLS 1.3
+- Add support for QUIC
+- Add configuration directive for LOG_OUTPUT
