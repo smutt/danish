@@ -451,7 +451,7 @@ def dbgLog(lvl, dbgStr):
   if LOG_OUTPUT == 'file':
     global LOG_HANDLE
     try:
-      if not (os.stat(LOG_FNAME).st_size / 1024) > LOG_SIZE:
+      if not (os.stat(LOG_FNAME).st_size / 1024 > LOG_SIZE):
         LOG_HANDLE.write(outStr + '\n')
       else:
         LOG_HANDLE.close()
