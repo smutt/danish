@@ -32,17 +32,17 @@ All shell commands below are to be executed from your OpenWRT or LEDE base direc
 
 1. Follow the instructions for building an [OpenWRT](https://github.com/openwrt/openwrt) or [LEDE](https://lede-project.org/docs/guide-developer/quickstart-build-images) image.
 2. Before actually compiling anything insert python-dpkt and danish package files into feeds/packages
-  2.1 `mkdir feeds/packages/lang/python-dpkt/`
-  2.2 Copy Makefile from [python-dpkt PR](https://github.com/openwrt/packages/pull/4256) to `feeds/packages/lang/python-dpkt/Makefile`
-  2.3 `mkdir feeds/packages/net/danish`
-  2.4 Copy Makefile from [Danish Github repository](https://github.com/smutt/danish) to `feeds/packages/net/danish/Makefile`
-  2.5 `./scripts/feeds update -a`
-  2.6 `./scripts/feeds install -a`
+  1. `mkdir feeds/packages/lang/python-dpkt/`
+  2. Copy Makefile from [python-dpkt PR](https://github.com/openwrt/packages/pull/4256) to `feeds/packages/lang/python-dpkt/Makefile`
+  3. `mkdir feeds/packages/net/danish`
+  4. Copy Makefile from [Danish Github repository](https://github.com/smutt/danish) to `feeds/packages/net/danish/Makefile`
+  5. `./scripts/feeds update -a`
+  6. `./scripts/feeds install -a`
 
-3. make menuconfig
+3. `make menuconfig`
 4. Select danish package under Network/IP Addresses and Names/danish 
 5. Exit make menuconfig
-6. make :shipit:
+6. `make` :shipit:
 7. Take a nap. :zzz:
 8. Awaken to a freshly compiled image. :sunglasses:
 
