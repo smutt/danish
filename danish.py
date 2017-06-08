@@ -626,8 +626,9 @@ def parseTCP(pkt):
 
 
 # Parses a TLS ClientHello packet
-# TODO:Check if it is a resumption of connection, if so ignore
-# TODO:Figure out TLS 1.0, 1.1, and 1.3
+# TODO:Check if it is a resumption of connection, if so ignore, we kinda already do this,
+#   but we should investigate if we can do it better.
+# TODO:Figure out 1.3
 def parseClientHello(hdr, pkt):
   dbgLog(LOG_DEBUG, "Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
@@ -662,7 +663,7 @@ def parseClientHello(hdr, pkt):
     try:
       tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     except:
-      dbgLog(LOG_DEBUG, "Bad TLS Handshake in ClientHello")
+      dbgLog(LOG_DEBUG, "Bad TLS Handshake in ClientHello Record")
       return
 
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
@@ -672,7 +673,7 @@ def parseClientHello(hdr, pkt):
     try:
       tlsClientHello = tlsHandshake.data
     except:
-      dbgLog(LOG_DEBUG, "Bad TLS Extensions in ClientHello")
+      dbgLog(LOG_DEBUG, "Bad TLS Extensions in ClientHello Record")
       return
 
     if 0 not in dict(tlsClientHello.extensions):
