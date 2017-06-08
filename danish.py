@@ -676,8 +676,12 @@ def parseClientHello(hdr, pkt):
       dbgLog(LOG_DEBUG, "Bad TLS Extensions in ClientHello Record")
       return
 
-    if 0 not in dict(tlsClientHello.extensions):
-      dbgLog(LOG_DEBUG, "SNI not found in TLS ClientHello ip.dst:" + pcapToHexStr(ip.dst))
+    if hasattr(tlsClientHello, 'extensions'):
+      if 0 not in dict(tlsClientHello.extensions):
+        dbgLog(LOG_DEBUG, "SNI not found in TLS ClientHello ip.dst:" + pcapToHexStr(ip.dst))
+        return
+    else:
+      dbgLog(LOG_DEBUG, "TLSClientHello has no extensions " + str(tlsHandshake.type))
       return
 
     sni = dict(tlsClientHello.extensions)[0]
