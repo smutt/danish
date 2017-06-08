@@ -766,6 +766,8 @@ def parseCert(SNI, ip, tls):
         dbgLog(LOG_ERROR, "ServerHello contains 0 certificates, " + SNI)
         return
       AuthThr(SNI, ip, tlsCertificate.certificates).start()
+    elif not dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'ServerHello':
+      dbgLog(LOG_INFO, "Unknown TLS Handshake type " + str(tlsHandshake.type) + " " + SNI)
 
 
 ###################
