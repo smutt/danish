@@ -451,12 +451,12 @@ def dbgLog(lvl, dbgStr):
   if LOG_OUTPUT == 'file':
     global LOG_HANDLE
     try:
-      if not (os.stat(LOG_FNAME).st_size / 1024 > LOG_SIZE):
+      if int(os.stat(LOG_FNAME).st_size / 1024) < LOG_SIZE:
         LOG_HANDLE.write(outStr + '\n')
       else:
         LOG_HANDLE.close()
         try:
-          LOG_HANDLE = open(LOG_FNAME, 'w+', 0)
+          LOG_HANDLE = open(LOG_FNAME, 'w')
           LOG_HANDLE.write(outStr + '\n')
         except IOError:
           death("IOError writing to debug file " + dbgFName)
