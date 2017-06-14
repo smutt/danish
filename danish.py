@@ -352,7 +352,7 @@ def readConfig():
 
   try:
     logLvl = uci('danish.@danish[0].loglevel')
-    LOG_SIZE = uci('danish.@danish[0].logsize')
+    UCI_LOG_SIZE = uci('danish.@danish[0].logsize')
     LOG_FNAME = uci('danish.@danish[0].logfile')
     IFACE = uci('danish.@network[0].interface')
     IPT_BINARY = uci('danish.@network[0].iptables')
@@ -364,6 +364,12 @@ def readConfig():
     LOG_LEVEL = eval('LOG_' + logLvl.upper())
   else:
     LOG_LEVEL = LOG_WARN
+
+  try:
+    int(UCI_LOG_SIZE)
+    LOG_SIZE = int(UCI_LOG_SIZE)
+  except:
+    logDbg(LOG_ERROR, "Invalid logsize configured, using default: " + str(LOG_SIZE) + "KB")
 
   try:
     IPT6_BINARY = uci('danish.@network[0].ip6tables')
@@ -456,7 +462,7 @@ def dbgLog(lvl, dbgStr):
       else:
         LOG_HANDLE.close()
         try:
-          LOG_HANDLE = open(LOG_FNAME, 'w')
+          LOG_HANDLE = open(LOG_FNAME, 'w', 1)
           LOG_HANDLE.write(outStr + '\n')
         except IOError:
           death("IOError writing to debug file " + dbgFName)
@@ -783,7 +789,7 @@ readConfig()
 # Enable debugging
 if LOG_OUTPUT == 'file':
   try:
-    LOG_HANDLE = open(LOG_FNAME, 'w+', 0)
+    LOG_HANDLE = open(LOG_FNAME, 'w', 1)
   except:
     death("Unable to open debug log file")
 
