@@ -754,10 +754,10 @@ def parseServerHello(SNI, ip, tls):
     return
 
   for rec in tls.records:
-    if rec.type != 22: # This can happen if we receive data before the cache has been cleared or on malformed packets
-      dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake(22), " + SNI)
+    if rec.type != 22:
+      #dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake(22), " + SNI)
       #dbgLog(LOG_DEBUG, "ip.data:" + repr(ip.data))
-      return
+      continue
 
     # We only support TLS 1.0 - 1.2 in TLS Records
     if rec.version < 769 or rec.version > 771:
@@ -767,7 +767,7 @@ def parseServerHello(SNI, ip, tls):
     try:
       tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     except dpkt.ssl.SSL3Exception:
-      dbgLog(LOG_DEBUG, "TLS Handshake type not Certificate(11), " + SNI)
+      dbgLog(LOG_DEBUG, "Error setting Handshake data, " + SNI)
       return
 
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
@@ -776,8 +776,9 @@ def parseServerHello(SNI, ip, tls):
         dbgLog(LOG_ERROR, "ServerHello contains 0 certificates, " + SNI)
         return
       AuthThr(SNI, ip, tlsCertificate.certificates).start()
+      return
     elif not dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'ServerHello':
-      dbgLog(LOG_INFO, "Unknown TLS Handshake type " + str(tlsHandshake.type) + " " + SNI)
+      dbgLog(LOG_DEBUG, "TLS Handshake Record type, " + str(tlsHandshake.type) + " " + SNI)
 
 
 ###################
