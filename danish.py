@@ -465,10 +465,10 @@ def dbgLog(lvl, dbgStr):
           LOG_HANDLE = open(LOG_FNAME, 'w', 1)
           LOG_HANDLE.write(outStr + '\n')
         except IOError:
-          death("IOError writing to debug file " + dbgFName)
+          death("IOError writing to debug file " + LOG_FNAME)
 
     except IOError:
-      death("IOError writing to debug file " + dbgFName)
+      death("IOError writing to debug file " + LOG_FNAME)
   elif LOG_OUTPUT == 'tty':
     print outStr
 
