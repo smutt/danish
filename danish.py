@@ -616,8 +616,8 @@ def checkV6Reply(hdr, pkt):
     if not tcp.flags & dpkt.tcp.TH_RST:
       if not tcp.flags & dpkt.tcp.TH_SYN:
         if not tcp.flags & dpkt.tcp.TH_FIN:
-          #dbgLog(LOG_DEBUG, "checkV6Reply to parseServerHello")
-          parseServerHello(hdr, pkt)
+          #dbgLog(LOG_DEBUG, "checkV6Reply to assembleServerHello")
+          assembleServerHello(hdr, pkt)
 
 
 # Takes pcapy packet and returns 3 layers
@@ -708,9 +708,8 @@ def parseClientHello(hdr, pkt):
     ReqThr(domain).start()
   
   
-# Parses a TLS ServerHello packet
-# We have to deal with TCP reassembly
-def parseServerHello(hdr, pkt):
+# Assembles a TLS ServerHello packet from potentially multiple TCP packets
+def assembleServerHello(hdr, pkt):
   global chCache, shCache
   if len(chCache) == 0:
     return
@@ -718,8 +717,8 @@ def parseServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  #dbgLog(LOG_DEBUG, "parseServerHello TCP reassembly IPv:" + str(ip.v))
-  #dbgLog(LOG_DEBUG, "parseServerHello:" + repr(ip.data))
+  #dbgLog(LOG_DEBUG, "assembleServerHello TCP reassembly IPv:" + str(ip.v))
+  #dbgLog(LOG_DEBUG, "assembleServerHello:" + repr(ip.data))
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
@@ -731,7 +730,7 @@ def parseServerHello(hdr, pkt):
           SNI = chCache[chIdx]
           del chCache[chIdx]
           del shCache[shIdx]
-          parseCert(SNI, ip, tls)
+          parseServerHello(SNI, ip, tls)
         except dpkt.NeedData:
           shCache.insert(shIdx, len(tcp.data), tcp.data)
     else:
@@ -740,14 +739,14 @@ def parseServerHello(hdr, pkt):
         SNI = chCache[chIdx]
         del chCache[chIdx]
         del shCache[shIdx]
-        parseCert(SNI, ip, tls)
+        parseServerHello(SNI, ip, tls)
       except dpkt.NeedData:
         shCache.insert(shIdx, tcp.seq + len(tcp.data), tcp.data)
 
 
 # TODO: Currently we ignore resumptions, investigate if we want to be fancier
-def parseCert(SNI, ip, tls):
-  dbgLog(LOG_DEBUG, "Entered parseCert " + SNI + " IPv" + str(ip.v))
+def parseServerHello(SNI, ip, tls):
+  dbgLog(LOG_DEBUG, "Entered parseServerHello " + SNI + " IPv" + str(ip.v))
 
   # We only support TLS 1.0 - 1.2 for now
   if tls.version < 769 or tls.version > 771:
@@ -828,7 +827,7 @@ BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[
   # Must accept TCP fragments
 
 RX_EGR_4 = initRx('RxEgr4', initPcap(IFACE, BPF_HELLO_4), parseClientHello)
-RX_ING_4 = initRx('RxIng4', initPcap(IFACE, BPF_REPLY_4), parseServerHello)
+RX_ING_4 = initRx('RxIng4', initPcap(IFACE, BPF_REPLY_4), assembleServerHello)
 
 # From http://www.tcpdump.org/manpages/pcap-filter.7.html
 # "Note that tcp, udp and other upper-layer protocol types only apply to IPv4, not IPv6 (this will be fixed in the future)."
