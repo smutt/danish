@@ -13,6 +13,8 @@ Full support for RFC 6698 is dependent on the OpenWRT/LEDE OpenSSL package also 
 ## Installation
 Danish is written to work on both [OpenWRT](https://www.openwrt.org/) and [LEDE](https://www.lede-project.org/). It should work equally well on both.
 
+Danish is tested with DNSMasq running on localhost, but it should work with any DNSSEC validating recursive DNS server running on localhost. OpenWRT/LEDE also supports Unbound and while it has not been tested it should work without any issues.
+
 For installation Danish requires the following other packages.
 * kmod-ipt-filter
 * iptables-mod-filter
