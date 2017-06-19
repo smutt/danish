@@ -65,7 +65,3 @@ Configuration directives are defined below.
 
 Possible values for loglevel listed by increasing verbosity are `error, warn, info, debug`.
 
-## TODO
-- Add support for TLS 1.3
-- Add support for QUIC
-- Add configuration directive for LOG_OUTPUT
