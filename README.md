@@ -35,7 +35,7 @@ All shell commands below are to be executed from your OpenWRT or LEDE base direc
 1. Follow the instructions for building an [OpenWRT](https://github.com/openwrt/openwrt) or [LEDE](https://lede-project.org/docs/guide-developer/quickstart-build-images) image.
 2. Before actually compiling anything insert python-dpkt and danish package files into feeds/packages
   - `mkdir feeds/packages/lang/python-dpkt/`
-  - Copy Makefile from [python-dpkt PR](https://github.com/openwrt/packages/pull/4256) to `feeds/packages/lang/python-dpkt/Makefile`
+  - Copy Makefile from [python-dpkt PR](https://github.com/openwrt/packages/pull/4256) to `feeds/packages/lang/python/python-dpkt/Makefile`
   - `mkdir feeds/packages/net/danish`
   - Copy Makefile from [danish github repository](https://github.com/smutt/danish) to `feeds/packages/net/danish/Makefile`
   - `./scripts/feeds update -a`
