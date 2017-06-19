@@ -606,7 +606,6 @@ def printPkt(hdr, pkt):
 def checkV6Hello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if (len(tcp.data) > 0) and (ord(tcp.data[0:1]) == 22):
-    #dbgLog(LOG_DEBUG, "checkV6Hello to parseClientHello")
     parseClientHello(hdr, pkt)
 
 
@@ -616,7 +615,6 @@ def checkV6Reply(hdr, pkt):
     if not tcp.flags & dpkt.tcp.TH_RST:
       if not tcp.flags & dpkt.tcp.TH_SYN:
         if not tcp.flags & dpkt.tcp.TH_FIN:
-          #dbgLog(LOG_DEBUG, "checkV6Reply to assembleServerHello")
           assembleServerHello(hdr, pkt)
 
 
@@ -632,11 +630,7 @@ def parseTCP(pkt):
 
 
 # Parses a TLS ClientHello packet
-# TODO:Check if it is a resumption of connection, if so ignore, we kinda already do this,
-#   but we should investigate if we can do it better.
-# TODO:Figure out 1.3
 def parseClientHello(hdr, pkt):
-  dbgLog(LOG_DEBUG, "Entered parseClientHello")
   eth, ip, tcp = parseTCP(pkt)
 
   try:
@@ -655,15 +649,14 @@ def parseClientHello(hdr, pkt):
     dbgLog(LOG_DEBUG, "TLS version " + str(tls.version) + " in ClientHello < SSL 3.0")
     return
 
-  # It's possible to have more than 1 record in the TLS ClientHello message,
-  # but I've never actually seen it and our BPF/parseTCP should prevent it from getting here.
   for rec in tls.records:
     if dpkt.ssl.RECORD_TYPES[rec.type].__name__ != 'TLSHandshake':
       dbgLog(LOG_DEBUG, "TLS ClientHello contains record other than TLSHandshake " + str(rec.type) + " ip.dst:" + pcapToHexStr(ip.dst))
       continue
 
-    if rec.version < 768:
-      dbgLog(LOG_DEBUG, "TLS Record version " + str(rec.version) + " in ClientHello < SSL 3.0")
+    # We only support TLS 1.0 - 1.2 in TLS Records
+    if rec.version < 769 or rec.version > 771:
+      dbgLog(LOG_INFO, "TLS version in ClientHello Record not supported, " + str(rec.version))
       return
 
     try:
@@ -673,13 +666,14 @@ def parseClientHello(hdr, pkt):
       return
 
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientHello':
-      dbgLog(LOG_DEBUG, "TLSHandshake captured not ClientHello " + str(tlsHandshake.type))
+      if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] != 'ClientKeyExchange':
+        dbgLog(LOG_DEBUG, "TLSHandshake captured not ClientHello or ClientKeyExchange " + str(tlsHandshake.type))
       return
 
     try:
       tlsClientHello = tlsHandshake.data
     except:
-      dbgLog(LOG_DEBUG, "Bad TLS Extensions in ClientHello Record")
+      dbgLog(LOG_ERROR, "Error setting ClientHello Handshake Record")
       return
 
     if hasattr(tlsClientHello, 'extensions'):
@@ -692,7 +686,7 @@ def parseClientHello(hdr, pkt):
 
     sni = dict(tlsClientHello.extensions)[0]
     if struct.unpack("!B", sni[2:3])[0] != 0:
-      dbgLog(LOG_DEBUG, "SNI not a DNS name")
+      dbgLog(LOG_ERROR, "SNI not a DNS name")
     domain = sni[5:struct.unpack("!H", sni[3:5])[0]+5]
     dbgLog(LOG_INFO, "Client SNI:" + domain)
 
@@ -700,7 +694,6 @@ def parseClientHello(hdr, pkt):
     for thr in threading.enumerate():
       if isinstance(thr, DanishThr) or isinstance(thr, threading._Timer):
         if thr.name.split("_")[1] == domain:
-          dbgLog(LOG_DEBUG, thr.name + " already active")
           return
 
     global chCache
@@ -717,8 +710,6 @@ def assembleServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  #dbgLog(LOG_DEBUG, "assembleServerHello TCP reassembly IPv:" + str(ip.v))
-  #dbgLog(LOG_DEBUG, "assembleServerHello:" + repr(ip.data))
   
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
@@ -744,10 +735,7 @@ def assembleServerHello(hdr, pkt):
         shCache.insert(shIdx, tcp.seq + len(tcp.data), tcp.data)
 
 
-# TODO: Currently we ignore resumptions, investigate if we want to be fancier
 def parseServerHello(SNI, ip, tls):
-  dbgLog(LOG_DEBUG, "Entered parseServerHello " + SNI + " IPv" + str(ip.v))
-
   # We only support TLS 1.0 - 1.2 for now
   if tls.version < 769 or tls.version > 771:
     dbgLog(LOG_DEBUG, "TLS version in ServerHello not supported, " + SNI + ", " + str(tls.version))
@@ -755,8 +743,6 @@ def parseServerHello(SNI, ip, tls):
 
   for rec in tls.records:
     if rec.type != 22:
-      #dbgLog(LOG_DEBUG, "TLS Record not TLSHandshake(22), " + SNI)
-      #dbgLog(LOG_DEBUG, "ip.data:" + repr(ip.data))
       continue
 
     # We only support TLS 1.0 - 1.2 in TLS Records
@@ -767,7 +753,7 @@ def parseServerHello(SNI, ip, tls):
     try:
       tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     except dpkt.ssl.SSL3Exception:
-      dbgLog(LOG_DEBUG, "Error setting Handshake data, " + SNI)
+      dbgLog(LOG_ERROR, "Error setting ServerHello Handshake data, " + SNI)
       return
 
     if dpkt.ssl.HANDSHAKE_TYPES[tlsHandshake.type][0] == 'Certificate':
@@ -820,7 +806,6 @@ if IP6_SUPPORT:
   ipt6('-I FORWARD -j ' + IPT_CHAIN)
 
 # http://serverfault.com/questions/574405/tcpdump-server-hello-certificate-filter
-# TODO: Investigate if we really want to be checking TLS version in ClientHellos(first part below)
 BPF_HELLO_4 = "(tcp[((tcp[12:1] & 0xf0) >> 2)+5:1] = 0x01) and (tcp[((tcp[12:1] & 0xf0) >> 2):1] = 0x16) and (dst port 443)"
 BPF_REPLY_4 = 'tcp and src port 443 and (tcp[tcpflags] & tcp-ack = 16) and (tcp[tcpflags] & tcp-syn != 2)' \
   ' and (tcp[tcpflags] & tcp-fin != 1) and (tcp[tcpflags] & tcp-rst != 1)'
