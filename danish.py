@@ -158,17 +158,29 @@ class AclThr(DanishThr):
         ' --source ' + pcapToDecStr(self.ip.src) + '/32 -p tcp --dport ' + \
         str(self.ip.data.dport) + ' --sport 443 -j DROP'
     elif self.ip.v == 6:
-      self.shortEgress = ' --destination ' +  pcapToDecStr(self.ip.src) + '/128' + \
-        ' --source ' + pcapToDecStr(self.ip.dst) + '/128 -p tcp --dport 443' + \
+      self.shortEgress = ' --destination ' +  pcapToHexStr(self.ip.src, ':', 2) + '/128' + \
+        ' --source ' + pcapToHexStr(self.ip.dst, ':', 2) + '/128 -p tcp --dport 443' + \
         ' --sport ' + str(self.ip.data.dport) + ' -j DROP'
-      self.shortIngress = ' --destination ' +  pcapToDecStr(self.ip.dst) + '/128' + \
-        ' --source ' + pcapToDecStr(self.ip.src) + '/128 -p tcp --dport ' + \
+      self.shortIngress = ' --destination ' +  pcapToHexStr(self.ip.dst, ':', 2) + '/128' + \
+        ' --source ' + pcapToHexStr(self.ip.src, ':', 2) + '/128 -p tcp --dport ' + \
         str(self.ip.data.dport) + ' --sport 443 -j DROP'
     self.longEgress = ' -p tcp --dport 443 -m string --algo bm --string ' + self.domain + ' -j DROP'
 
-    self.addChain()
-    self.addShort()
-    self.addLong()
+    try:
+      self.addChain()
+    except:
+      dbgLog(LOG_ERROR, "Add Chain fail for " + self.chain)
+
+    try:
+      self.addShort()
+    except:
+      dbgLog(LOG_ERROR, "Add Short ACL fail for " + self.chain + " IPv" + str(self.ip.v))
+
+    try:
+      self.addLong()
+    except:
+      dbgLog(LOG_ERROR, "Add Long ACL fail for " + self.chain)
+
     dbgLog(LOG_DEBUG, "Added ACLs IPv" + str(self.ip.v) + ", TTL:" + str(self.longTTL))
 
     # Set timers to remove ACLs
@@ -506,12 +518,16 @@ def initRx(name, pcapObj, callBack):
 
 
 # Change dpkt character bytes to padded hex string without leading 0x
-# Only used for debugging right now
-def pcapToHexStr(val, delim=":"):
+# Use delimiter of delim every l bytes
+def pcapToHexStr(val, delim=":", l=1):
   rv = ''
+  ii = 1
   for v in val:
-    rv += hex(ord(v)).split("0x")[1].rjust(2, "0") + delim
-  return rv
+    rv += hex(ord(v)).split("0x")[1].rjust(2, "0")
+    if ii % l == 0:
+      rv += delim
+    ii += 1
+  return rv.strip(":")
 
 
 # Change dpkt character bytes to string decimal values with a delimiter of delim between bytes
