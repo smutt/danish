@@ -381,7 +381,7 @@ def readConfig():
     int(UCI_LOG_SIZE)
     LOG_SIZE = int(UCI_LOG_SIZE)
   except:
-    logDbg(LOG_ERROR, "Invalid logsize configured, using default: " + str(LOG_SIZE) + "KB")
+    dbgLog(LOG_ERROR, "Invalid logsize configured, using default: " + str(LOG_SIZE) + "KB")
 
   try:
     IPT6_BINARY = uci('danish.@network[0].ip6tables')
