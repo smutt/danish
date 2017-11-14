@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2017 OpenWrt.org
+# Copyright (C) 2017 Andrew McConachie
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -16,7 +16,7 @@ PKG_LICENSE:=GPL-3.0
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/smutt/danish.git
-PKG_SOURCE_VERSION:=5fd492ef66b1569531390e560f4f756053e8c7bc
+PKG_SOURCE_VERSION:=c10155416d0e570c5224401ad008ccb9fa6151bd
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
 
 PKG_BUILD_DEPENDS:=python python-setuptools
@@ -28,13 +28,14 @@ define Package/danish
 	SECTION:=net
 	CATEGORY:=Network
 	SUBMENU:=IP Addresses and Names
-	TITLE:=danish
+	TITLE:=A middle box implementation of RFC 6698 for HTTPS.
 	URL:=https://github.com/smutt/danish
 	DEPENDS:=+python +python-dns +python-pcapy +python-dpkt +kmod-ipt-filter +iptables-mod-filter +dnsmasq-full
 endef
 
 define Package/danish/description
   Danish is an experiment in middle-box DANE (RFC 6698) for HTTPS.
+  https://www.middlebox-dane.org/
 endef
 
 define Build/Compile
