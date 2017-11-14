@@ -678,6 +678,7 @@ def parseClientHello(hdr, pkt):
     return
 
   # RFC 5246 Appx-E.1 says 0x0300 is the lowest value clients can send
+  # dpkt sets tls.version to the version in the 1st record found
   if tls.version < 768:
     dbgLog(LOG_DEBUG, "TLS version " + str(tls.version) + " in ClientHello < SSL 3.0")
     return
@@ -688,7 +689,8 @@ def parseClientHello(hdr, pkt):
       continue
 
     # We only support TLS 1.0 - 1.2 in TLS Records
-    if rec.version < 769 or rec.version > 771:
+    # However, the client hello version is just the lowest version the client will accept and we bottom out at SSL 3.0
+    if rec.version < 768 or rec.version > 771:
       dbgLog(LOG_INFO, "TLS version in ClientHello Record not supported, " + str(rec.version))
       return
 
