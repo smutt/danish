@@ -13,7 +13,7 @@ Full support for RFC 6698 is dependent on the OpenWRT/LEDE OpenSSL package also 
 ## Installation
 Danish is written to work on both [OpenWRT](https://www.openwrt.org/) and [LEDE](https://www.lede-project.org/). It should work equally well on both.
 
-Danish is tested with DNSMasq running on localhost, but it should work with any DNSSEC validating recursive DNS server running on localhost. OpenWRT/LEDE also supports Unbound and while it has not been tested it should work without any issues.
+Danish is tested with DNSMasq running on localhost, but it should work with any DNSSEC validating recursive server running on localhost. OpenWRT/LEDE also supports Unbound and while it has not been tested it should work without any issues.
 
 For installation Danish requires the following other packages.
 * kmod-ipt-filter
@@ -24,18 +24,14 @@ For installation Danish requires the following other packages.
 * python-pcapy
 * python-dpkt
 
-### python-dpkt & danish OpenWRT packages
-At time of writing the [python-dpkt package](https://github.com/openwrt/packages/pull/4256) is not yet merged into the [OpenWRT Repository](https://github.com/openwrt/packages). Once it is merged, a pull request will be submitted for a Danish package to be created.
-
-Until these packages are merged into the OpenWRT repository step 2 below will be required to install Danish.
+### Danish OpenWRT package
+Until the Danish package is merged into the OpenWRT packages repository step 2 below will be required to install.
 
 ### Building an Image with Danish
 All shell commands below are to be executed from your OpenWRT or LEDE base directory.
 
 1. Follow the instructions for building an [OpenWRT](https://github.com/openwrt/openwrt) or [LEDE](https://lede-project.org/docs/guide-developer/quickstart-build-images) image.
-2. Before actually compiling anything insert python-dpkt and danish package files into feeds/packages
-  - `mkdir feeds/packages/lang/python-dpkt/`
-  - Copy Makefile from [python-dpkt PR](https://github.com/openwrt/packages/pull/4256) to `feeds/packages/lang/python/python-dpkt/Makefile`
+2. Before actually compiling anything insert the danish package file into feeds/packages.
   - `mkdir feeds/packages/net/danish`
   - Copy Makefile from [danish github repository](https://github.com/smutt/danish) to `feeds/packages/net/danish/Makefile`
   - `./scripts/feeds update -a`
@@ -50,7 +46,6 @@ All shell commands below are to be executed from your OpenWRT or LEDE base direc
 :grey_exclamation: You may need to de-select package dnsmasq as it may conflict with dnsmasq-full. dnsmasq-full includes DNSSEC support and Danish requires DNSSEC.
 
 ## Configuration
-
 Danish uses the Universal Configuration Interface (UCI). The Danish configuration file is stored in `/etc/config/danish`.
 
 Configuration directives are defined below.
