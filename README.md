@@ -24,24 +24,15 @@ For installation Danish requires the following other packages.
 * python-pcapy
 * python-dpkt
 
-### Danish OpenWRT package
-Until the Danish package is merged into the OpenWRT packages repository step 2 below will be required to install.
-
 ### Building an Image with Danish
 All shell commands below are to be executed from your OpenWRT or LEDE base directory.
 
 1. Follow the instructions for building an [OpenWRT](https://github.com/openwrt/openwrt) or [LEDE](https://lede-project.org/docs/guide-developer/quickstart-build-images) image.
-2. Before actually compiling anything insert the danish package file into feeds/packages.
-  - `mkdir feeds/packages/net/danish`
-  - Copy Makefile from [danish github repository](https://github.com/smutt/danish) to `feeds/packages/net/danish/Makefile`
-  - `./scripts/feeds update -a`
-  - `./scripts/feeds install -a`
-
-3. `make menuconfig`
-4. Select danish package under Network/IP Addresses and Names/danish 
-5. `make` :shipit:
-6. Take a nap. :zzz:
-7. Awaken to a freshly compiled image. :sunglasses:
+2. `make menuconfig`
+3. Select danish package under Network/IP Addresses and Names/danish 
+4. `make` 
+5. Take a nap. :zzz:
+6. Awaken to a freshly compiled image. :sunglasses:
 
 :grey_exclamation: You may need to de-select package dnsmasq as it may conflict with dnsmasq-full. dnsmasq-full includes DNSSEC support and Danish requires DNSSEC.
 
