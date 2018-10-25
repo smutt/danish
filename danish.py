@@ -295,10 +295,10 @@ class DanishCache:
   def __setitem__(self, k, v):
     self._entries[k] = v
     self._ts[k] = datetime.datetime.utcnow()
-    
+
   def __getitem__(self, k):
     return self._entries[k]
-  
+
   def __delitem__(self, k):
     try:
       del self._entries[k]
@@ -456,7 +456,7 @@ def handleKilling(signal, frame):
 
   sys.exit(0)
 
-  
+
 # Logs message to LOG_FNAME or tty
 def dbgLog(lvl, dbgStr):
   if not LOG_OUTPUT:
@@ -501,7 +501,7 @@ def dbgLog(lvl, dbgStr):
   elif LOG_OUTPUT == 'tty':
     print outStr
 
-    
+
 # Initializes a pcap capture object
 # Prints a string on failure and returns pcapy.Reader on success
 def initPcap(iface, filt):
@@ -578,14 +578,14 @@ def printNibbles(chars):
 
     if(ii % 4 == 0):
       outStr += " "
-    
+
     if(ii % 16 == 0):
       print outStr + " | " + outAsc
       outStr = str(ii).zfill(4) + " | "
       outAsc = ""
     ii += 1
 
-    
+
 # Writes a packet to /tmp/danish.pcap
 # Debugging only
 def dumpPkt(pkt):
@@ -594,7 +594,7 @@ def dumpPkt(pkt):
   df.writepkt(pkt)
   df.close()
 
-  
+
 # Prints a packet for debugging, can assume it's always TCP
 def printPkt(hdr, pkt):
   # Print timestamps
@@ -603,7 +603,7 @@ def printPkt(hdr, pkt):
     print "tAbs>" + str(tAbs) + " tRel>" + str(tRel) + " " 
 
   s = dpktDataToNibStrList(pkt)
-  
+
   # Print Linklayer
   dst2 = ':'.join(s[:6])
   src2 = ':'.join(s[6:12])
@@ -620,7 +620,7 @@ def printPkt(hdr, pkt):
     dst3 = ':'.join(s[30:34])
     print "L3 dst>" + dst3 + " src>" + src3 + " frag>" + frag
     printNibbles(s[34:])
-    
+
   elif etype == '86:dd':
     #ver = 'IPv6'
     #ln = ':'.join(s[18:20])
@@ -734,8 +734,8 @@ def parseClientHello(hdr, pkt):
     global chCache
     chCache.insert(chCache.idx(ip.src, ip.dst, tcp.sport), domain)
     ReqThr(domain).start()
-  
-  
+
+
 # Assembles a TLS ServerHello packet from potentially multiple TCP packets
 def assembleServerHello(hdr, pkt):
   global chCache, shCache
@@ -745,7 +745,7 @@ def assembleServerHello(hdr, pkt):
   eth, ip, tcp = parseTCP(pkt)
   if len(tcp.data) == 0:
     return
-  
+
   chIdx = chCache.idx(ip.dst, ip.src, tcp.dport)
   shIdx = shCache.idx(ip.src, ip.dst, tcp.sport)
   if chIdx in chCache:
@@ -784,7 +784,7 @@ def parseServerHello(SNI, ip, tls):
     if rec.version < 769 or rec.version > 771:
       dbgLog(LOG_INFO, "TLS version in ServerHello Record not supported, " + SNI + ", " + str(rec.version))
       return
-    
+
     try:
       tlsHandshake = dpkt.ssl.RECORD_TYPES[rec.type](rec.data)
     except dpkt.ssl.SSL3Exception:
