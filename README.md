@@ -8,21 +8,20 @@ If the certificates and DNS TLSA records do NOT match, iptables/ip6tables ACLs a
 ## Supported Protocols and Versions
 Danish currently supports TLS 1.0 - 1.2, IPv4/IPv6, and some TLSA RRs. Danish only supports TLSA certificate usage 1 and 3, and TLSA selector 0. TLSA records that Danish does not support are ignored.
 
-Full support for RFC 6698 is dependent on the OpenWRT/LEDE OpenSSL package also supporting DANE.
-
 ## Installation
 Danish is written to work on both [OpenWRT](https://www.openwrt.org/) and [LEDE](https://www.lede-project.org/). It should work equally well on both.
 
-Danish is tested with DNSMasq running on localhost, but it should work with any DNSSEC validating recursive server running on localhost. OpenWRT/LEDE also supports Unbound and while it has not been tested it should work without any issues.
+Danish has been tested with DNSMasq and Unbound running on localhost, but it should work with any DNSSEC validating recursive server. It is not required to run a recursive server on localhost and pointing /etc/resolv.conf to a working recursive resolver should also work.
 
 For installation Danish requires the following other packages.
 * kmod-ipt-filter
 * iptables-mod-filter
-* dnsmasq-full
 * python
 * python-dns
 * python-pcapy
 * python-dpkt
+
+Danish can be installed using OpenWRT's opkg package manager.
 
 ### Building an Image with Danish
 All shell commands below are to be executed from your OpenWRT or LEDE base directory.
